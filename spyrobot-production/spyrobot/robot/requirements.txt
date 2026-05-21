@@ -1,0 +1,18 @@
+# SpyRobot Raspberry Pi — Python dependencies
+# Install:
+#   python3 -m venv venv
+#   source venv/bin/activate
+#   pip install -r requirements.txt
+
+# MQTT client
+paho-mqtt>=2.0.0
+
+# GPIO (Raspberry Pi only — skip on dev machine)
+# RPi.GPIO>=0.7.1     # For Pi 4 and older
+# lgpio>=0.2.0.0      # Preferred for Pi 5
+
+# I2C (for sensors like INA219 battery monitor, BNO055 IMU)
+smbus2>=0.4.3
+
+# Utilities
+python-dotenv>=1.0.0   # Load .env file
