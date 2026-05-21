@@ -1,0 +1,69 @@
+# ============================================================
+# /etc/systemd/system/spyrobot-controller.service
+#
+# Auto-starts the motor/MQTT controller on boot.
+# Install:
+#   sudo cp spyrobot-controller.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable spyrobot-controller
+#   sudo systemctl start spyrobot-controller
+# ============================================================
+[Unit]
+Description=SpyRobot Motor and MQTT Controller
+After=network-online.target
+Wants=network-online.target
+# Start after stream service so camera is available
+After=spyrobot-stream.service
+
+[Service]
+Type=simple
+User=pi
+Group=gpio
+EnvironmentFile=/etc/spyrobot/.env
+WorkingDirectory=/home/pi/spyrobot/robot
+ExecStart=/home/pi/spyrobot/venv/bin/python src/robot_controller.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spyrobot-controller
+
+# Watchdog: systemd restarts service if it stops responding
+WatchdogSec=60
+
+# Security
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log /tmp
+
+[Install]
+WantedBy=multi-user.target
+
+
+# ============================================================
+# /etc/systemd/system/spyrobot-stream.service
+#
+# Auto-starts the camera streaming pipeline on boot.
+# This must start BEFORE the controller since video is
+# independent of robot control.
+# ============================================================
+# [Unit]
+# Description=SpyRobot Camera Stream (libcamera + FFmpeg → MediaMTX)
+# After=network-online.target
+# Wants=network-online.target
+#
+# [Service]
+# Type=simple
+# User=pi
+# Group=video
+# EnvironmentFile=/etc/spyrobot/.env
+# WorkingDirectory=/home/pi/spyrobot/robot
+# ExecStart=/bin/bash src/stream.sh
+# Restart=always
+# RestartSec=5
+# StandardOutput=journal
+# StandardError=journal
+# SyslogIdentifier=spyrobot-stream
+#
+# [Install]
+# WantedBy=multi-user.target

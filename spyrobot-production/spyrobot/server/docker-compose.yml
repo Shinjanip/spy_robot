@@ -1,0 +1,104 @@
+###############################################################
+# SpyRobot — Docker Compose
+#
+# Runs on: Your laptop (dev) OR your VPS (prod)
+# The Raspberry Pi does NOT run Docker; it connects here.
+#
+# USAGE:
+#   Dev   : docker compose up
+#   Prod  : docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Services:
+#   mediamtx  — video ingest (RTSP from RPi) + WebRTC delivery to browser
+#   nginx     — HTTPS reverse proxy + static dashboard serving
+#   coturn    — TURN server for WebRTC NAT traversal (prod)
+#
+###############################################################
+
+services:
+
+  # ── MediaMTX ─────────────────────────────────────────────────
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: spyrobot-mediamtx
+    restart: unless-stopped
+    network_mode: host            # Host network required for WebRTC ICE
+                                  # (port mapping breaks ICE candidate gathering)
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+      - mediamtx-recordings:/recordings
+    environment:
+      - MTX_LOGLEVEL=info
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9997/v3/config/global/get"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── NGINX reverse proxy ───────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: spyrobot-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro   # TLS certs (Let's Encrypt)
+      - dashboard-dist:/usr/share/nginx/html:ro
+    depends_on:
+      - mediamtx
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Coturn TURN server ─────────────────────────────────────────
+  # Required in production when viewers are behind strict NAT.
+  # On your laptop during dev you can comment this out.
+  coturn:
+    image: coturn/coturn:latest
+    container_name: spyrobot-coturn
+    restart: unless-stopped
+    network_mode: host            # TURN needs host network for UDP port range
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: -c /etc/coturn/turnserver.conf
+    healthcheck:
+      test: ["CMD", "turnutils_uclient", "-t", "-p", "3478", "127.0.0.1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── Dashboard builder (dev only; prod builds to static files) ─
+  dashboard-dev:
+    image: node:20-alpine
+    container_name: spyrobot-dashboard-dev
+    working_dir: /app
+    volumes:
+      - ../../dashboard:/app
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    profiles: ["dev"]            # Only starts with: docker compose --profile dev up
+
+volumes:
+  mediamtx-recordings:
+  dashboard-dist:
+
+###############################################################
+# docker-compose.prod.yml overrides — apply in production only:
+#
+# services:
+#   mediamtx:
+#     environment:
+#       - MTX_RTSPENCRYPTION=strict
+#       - MTX_RTSPSADDRESS=:8322
+#   nginx:
+#     volumes:
+#       - /etc/letsencrypt:/etc/nginx/certs:ro
+###############################################################

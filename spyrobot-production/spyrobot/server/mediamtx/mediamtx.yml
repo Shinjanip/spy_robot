@@ -1,0 +1,149 @@
+###############################################################
+# MediaMTX Configuration
+# SpyRobot — Production Streaming Server
+#
+# Dev setup  : Run on your laptop, RPi pushes RTSP here
+# Prod setup : Run on VPS, same config — just change IPs
+#
+# Browser viewers connect via WHEP (WebRTC) for low latency.
+# HLS is available as automatic fallback for mobile Safari.
+#
+# MediaMTX docs: https://github.com/bluenviron/mediamtx
+###############################################################
+
+# ── Global settings ────────────────────────────────────────────
+logLevel: info
+logDestinations: [stdout]
+
+# API for health checks and stream metadata
+api: yes
+apiAddress: :9997
+
+# Metrics (expose to Prometheus if you add monitoring later)
+metrics: no
+
+# ── RTSP ───────────────────────────────────────────────────────
+rtsp: yes
+rtspAddress: :8554
+rtspEncryption: no               # Set to 'strict' + add cert for prod
+# rtspsAddress: :8322            # RTSPS (TLS) — uncomment for prod
+# rtspServerCert: /certs/server.crt
+# rtspServerKey:  /certs/server.key
+
+# ── RTMP ───────────────────────────────────────────────────────
+rtmp: no                         # Not needed; we use RTSP
+
+# ── HLS ────────────────────────────────────────────────────────
+hls: yes
+hlsAddress: :8888
+hlsEncryption: no
+hlsVariant: lowLatency           # Low-Latency HLS (LLHLS) — <2s latency on Safari
+hlsSegmentCount: 3
+hlsSegmentDuration: 0.5s         # 500ms segments for LLHLS
+hlsPartDuration: 100ms           # 100ms parts
+hlsSegmentMaxSize: 50M
+hlsAllowOrigin: "*"              # CORS — restrict in prod to your domain
+
+# ── WebRTC ─────────────────────────────────────────────────────
+webrtc: yes
+webrtcAddress: :8889
+webrtcEncryption: no             # NGINX handles TLS termination in prod
+
+# ICE/STUN/TURN configuration
+# For laptop dev: browser and server are on same LAN, often no TURN needed.
+# For VPS prod: TURN is required for clients behind strict NAT.
+webrtcICEServers2:
+  - urls: [stun:stun.l.google.com:19302]
+  - urls: [stun:stun1.l.google.com:19302]
+  # Uncomment and fill in when Coturn is running on your VPS:
+  # - urls: [turn:YOUR_VPS_IP:3478]
+  #   username: spyrobot
+  #   credential: YOUR_TURN_SECRET
+
+# Candidate IPs to advertise to WebRTC clients
+# Dev: Leave blank (auto-detect LAN IP)
+# Prod: Set to your VPS public IP
+webrtcAdditionalHosts: []
+# webrtcAdditionalHosts: [YOUR_VPS_PUBLIC_IP]
+
+# WHEP endpoint for browser viewers (read-only WebRTC)
+# Browser connects to: http://SERVER:8889/spyrobot/live/whep
+# This is what the dashboard uses — no signaling over MQTT needed.
+webrtcICEHostNAT1To1IPs: []
+
+# ── SRT ────────────────────────────────────────────────────────
+srt: no                          # Enable later if you want SRT ingest
+
+# ── Authentication ─────────────────────────────────────────────
+# For production: use a credentials file or JWT auth
+# authMethod: internal
+# authInternalUsers:
+#   - user: robot_publisher
+#     pass: STRONG_PASSWORD
+#     permissions:
+#       - action: publish
+#         path: spyrobot/live
+#   - user: viewer
+#     pass: VIEWER_PASSWORD
+#     permissions:
+#       - action: read
+#         path: spyrobot/live
+
+# Dev mode: no auth (restrict in prod)
+authMethod: no
+
+# ── Stream paths ────────────────────────────────────────────────
+paths:
+  # ── Live robot stream ─────────────────────────────────────
+  spyrobot/live:
+    # The RPi pushes RTSP to this path.
+    # MediaMTX accepts any source that publishes here.
+    source: publisher
+
+    # Record to disk (optional — enable for audit/inspection trails)
+    record: no
+    # record: yes
+    # recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+    # recordFormat: fmp4
+    # recordSegmentDuration: 5m
+
+    # If the publisher disconnects and reconnects, MediaMTX
+    # buffers the last few GOP so existing viewers don't stall.
+    sourceOnDemand: no
+
+    # Restream-on-demand: start accepting a publisher only when
+    # someone is watching. Set to yes to save RPi bandwidth
+    # when no one is viewing. Leave no for 24/7 operation.
+    # runOnDemand: libcamera-vid ...   # can launch stream from here too
+
+    # Allow overwrite (RPi reconnects replace the stream)
+    overridePublisher: yes
+
+    # Hooks (call a webhook when stream starts/stops)
+    # runOnPublish: curl -X POST http://api:3000/stream/started
+    # runOnPublishRestart: yes
+
+  # ── High quality stream (for recording/inspection) ────────
+  spyrobot/hq:
+    source: publisher
+    overridePublisher: yes
+
+  # ── Test pattern (no camera needed for dashboard testing) ──
+  spyrobot/test:
+    # Generate a test card — great for dashboard development
+    # without needing the robot connected
+    runOnInit: >
+      ffmpeg -re -f lavfi
+      -i testsrc=size=1280x720:rate=30
+      -f lavfi -i sine=frequency=0
+      -c:v libx264 -preset ultrafast -tune zerolatency
+      -b:v 2M -g 60 -sc_threshold 0
+      -c:a aac -b:a 32k
+      -f rtsp -rtsp_transport tcp
+      rtsp://localhost:8554/spyrobot/test
+    runOnInitRestart: yes
+
+  # ── Catch-all for any path ─────────────────────────────────
+  "~.*":
+    source: publisher
+    overridePublisher: yes
