@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>SpyRobot</title>
+  <style>
+    body { margin: 0; background: #0a0e1a; color: #f9fafb; font-family: system-ui, sans-serif; }
+    #layout { display: grid; grid-template-rows: 48px 1fr auto; min-height: 100dvh; }
+    header { background: #111827; border-bottom: 1px solid #374151; display: flex; align-items: center; padding: 0 16px; gap: 12px; }
+    h1 { font-size: 15px; font-weight: 700; letter-spacing: 1px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; margin-left: auto; }
+    .dot.ok { background: #10b981; }
+    .label { font-size: 12px; color: #9ca3af; }
+
+    #video-wrap { position: relative; background: #000; }
+    video { width: 100%; display: block; max-height: 60vh; object-fit: contain; }
+    #overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+    #status-msg { background: rgba(0,0,0,0.7); padding: 8px 16px; border-radius: 6px; font-size: 13px; }
+    #play-btn { display: none; background: #3b82f6; border: none; color: #fff; padding: 10px 24px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+
+    #controls { background: #111827; padding: 16px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+    #joystick-zone { width: 160px; height: 160px; border-radius: 50%; background: #1f2937; border: 2px solid #374151; position: relative; touch-action: none; cursor: crosshair; }
+    #knob { width: 56px; height: 56px; border-radius: 50%; background: #3b82f6; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); pointer-events: none; }
+    #debug { font-size: 11px; font-family: monospace; color: #6b7280; max-height: 120px; overflow-y: auto; background: #111; padding: 8px; border-radius: 4px; width: 100%; max-width: 500px; }
+    .log-ok   { color: #10b981; }
+    .log-err  { color: #ef4444; }
+    .log-warn { color: #f59e0b; }
+  </style>
+</head>
+<body>
+<div id="layout">
+  <header>
+    <h1>SPYROBOT</h1>
+    <span class="dot" id="stream-dot"></span><span class="label" id="stream-label">stream</span>
+    <span class="dot" id="mqtt-dot" style="margin-left:8px"></span><span class="label" id="mqtt-label">mqtt</span>
+  </header>
+
+  <div id="video-wrap">
+    <!-- muted is REQUIRED for autoplay to work without user gesture -->
+    <video id="vid" autoplay muted playsinline></video>
+    <div id="overlay">
+      <div id="status-msg">Connecting to stream…</div>
+      <!-- shown if autoplay is blocked -->
+      <button id="play-btn" onclick="document.getElementById('vid').play(); this.style.display='none'">
+        ▶ Tap to play
+      </button>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div id="joystick-zone"><div id="knob"></div></div>
+    <div id="debug"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script>
+// ══════════════════════════════════════════════════
+// CONFIG — update these
+// ══════════════════════════════════════════════════
+const CFG = {
+  // Must be POST to this exact path with /whep suffix
+  whepUrl:  'http://192.168.1.6:8889/spyrobot/live/whep',
+  mqttUrl:  'wss://5b5d1fc229d14745991d15a955fef7ca.s1.eu.hivemq.cloud/8884/mqtt',
+  mqttUser: 'spyrobot',
+  mqttPass: 'MySecurePass123',
+  cmdMoveTopic: 'robot/cmd/move',
+  cmdStopTopic: 'robot/cmd/stop',
+};
+
+// ── Logging ──────────────────────────────────────
+const dbg = document.getElementById('debug');
+function log(msg, cls = '') {
+  const d = document.createElement('div');
+  d.className = cls;
+  d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+  dbg.prepend(d);
+  if (dbg.children.length > 40) dbg.removeChild(dbg.lastChild);
+  console.log(msg);
+}
+
+// ── Video player ─────────────────────────────────
+const vid = document.getElementById('vid');
+const streamDot = document.getElementById('stream-dot');
+const streamLabel = document.getElementById('stream-label');
+const statusMsg = document.getElementById('status-msg');
+const playBtn = document.getElementById('play-btn');
+let pc = null;
+let retryDelay = 2000;
+
+async function connectStream() {
+  if (pc) { pc.close(); pc = null; }
+  statusMsg.textContent = 'Connecting to stream…';
+  streamDot.className = 'dot';
+  log('WHEP connecting → ' + CFG.whepUrl);
+
+  try {
+    pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      bundlePolicy: 'max-bundle',
+    });
+
+    // ↓ CRITICAL: must add recvonly transceiver BEFORE createOffer
+    //   Without this, the SDP offer has no media sections and ontrack never fires.
+    pc.addTransceiver('video', { direction: 'recvonly' });
+
+    pc.ontrack = (e) => {
+      log('ontrack fired — track kind: ' + e.track.kind, 'log-ok');
+      vid.srcObject = e.streams[0];
+
+      // Autoplay may be blocked — try playing and show button if blocked
+      vid.play().then(() => {
+        log('Autoplay succeeded', 'log-ok');
+        document.getElementById('overlay').style.display = 'none';
+        streamDot.className = 'dot ok';
+        streamLabel.textContent = 'live';
+        retryDelay = 2000;
+      }).catch(err => {
+        log('Autoplay blocked: ' + err.message + ' — tap to play', 'log-warn');
+        statusMsg.textContent = '';
+        playBtn.style.display = 'block';
+        streamDot.className = 'dot ok';
+      });
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      log('ICE state: ' + pc.iceConnectionState);
+      if (['failed', 'disconnected'].includes(pc.iceConnectionState)) {
+        log('ICE failed — retrying in ' + retryDelay + 'ms', 'log-warn');
+        setTimeout(connectStream, retryDelay);
+        retryDelay = Math.min(retryDelay * 1.5, 30000);
+      }
+    };
+
+    // Create offer and wait for ICE candidates
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    await new Promise(resolve => {
+      if (pc.iceGatheringState === 'complete') return resolve();
+      pc.onicegatheringstatechange = () => {
+        if (pc.iceGatheringState === 'complete') resolve();
+      };
+      setTimeout(resolve, 4000);  // don't wait forever
+    });
+
+    log('Sending SDP offer to MediaMTX…');
+
+    // WHEP: POST SDP offer, receive SDP answer
+    const resp = await fetch(CFG.whepUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/sdp' },
+      body: pc.localDescription.sdp,
+    });
+
+    log('WHEP response: HTTP ' + resp.status);
+
+    if (!resp.ok) {
+      const body = await resp.text();
+      throw new Error('HTTP ' + resp.status + ': ' + body);
+    }
+
+    const answerSdp = await resp.text();
+    log('Got SDP answer (' + answerSdp.length + ' bytes)');
+
+    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    log('Remote description set — waiting for track…');
+    statusMsg.textContent = 'Waiting for video…';
+
+    // If ontrack hasn't fired after 8s, something's wrong upstream (no stream on MediaMTX)
+    setTimeout(() => {
+      if (!vid.srcObject) {
+        log('No track after 8s — is the Pi stream running? Check MediaMTX logs.', 'log-err');
+        statusMsg.textContent = 'No video — is stream.sh running on Pi?';
+        setTimeout(connectStream, retryDelay);
+        retryDelay = Math.min(retryDelay * 1.5, 30000);
+      }
+    }, 8000);
+
+  } catch (err) {
+    log('Stream error: ' + err.message, 'log-err');
+    statusMsg.textContent = 'Stream error — retrying…';
+    setTimeout(connectStream, retryDelay);
+    retryDelay = Math.min(retryDelay * 1.5, 30000);
+  }
+}
+
+// ── MQTT ─────────────────────────────────────────
+const mqttDot   = document.getElementById('mqtt-dot');
+const mqttLabel = document.getElementById('mqtt-label');
+let mqttClient = null;
+let lastPub = 0;
+
+function connectMqtt() {
+  log('MQTT connecting → ' + CFG.mqttUrl);
+  mqttClient = mqtt.connect(CFG.mqttUrl, {
+    username: CFG.mqttUser,
+    password: CFG.mqttPass,
+    clientId: 'dashboard-' + Math.random().toString(36).slice(2, 8),
+    reconnectPeriod: 3000,
+    keepalive: 30,
+  });
+
+  mqttClient.on('connect', () => {
+    mqttDot.className = 'dot ok';
+    mqttLabel.textContent = 'mqtt ok';
+    log('MQTT connected', 'log-ok');
+  });
+  mqttClient.on('error', err => {
+    log('MQTT error: ' + err.message, 'log-err');
+  });
+  mqttClient.on('close', () => {
+    mqttDot.className = 'dot';
+    mqttLabel.textContent = 'mqtt off';
+    log('MQTT disconnected', 'log-warn');
+  });
+  mqttClient.on('message', (topic, payload) => {
+    log('MQTT rx ' + topic + ': ' + payload.toString().slice(0, 60));
+  });
+}
+
+function publishMove(x, y) {
+  if (!mqttClient?.connected) return;
+  const now = Date.now();
+  if (now - lastPub < 100) return;  // max 10Hz
+  lastPub = now;
+  const payload = JSON.stringify({ x: +x.toFixed(3), y: +y.toFixed(3) });
+  mqttClient.publish(CFG.cmdMoveTopic, payload, { qos: 0 });
+  // Uncomment to spam debug log (noisy):
+  // log('→ move ' + payload);
+}
+
+// ── Joystick ─────────────────────────────────────
+const zone = document.getElementById('joystick-zone');
+const knob = document.getElementById('knob');
+const R = 80;
+let active = false, ox = 0, oy = 0, cx = 0, cy = 0;
+
+function jStart(e) {
+  active = true;
+  const r = zone.getBoundingClientRect();
+  ox = r.left + r.width / 2;
+  oy = r.top + r.height / 2;
+  jMove(e);
+}
+function jMove(e) {
+  if (!active) return;
+  const pt = e.touches ? e.touches[0] : e;
+  const dx = pt.clientX - ox, dy = pt.clientY - oy;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  const clamp = Math.min(dist, R);
+  const a = Math.atan2(dy, dx);
+  cx = Math.cos(a) * clamp;
+  cy = Math.sin(a) * clamp;
+  knob.style.transform = `translate(calc(-50% + ${cx}px), calc(-50% + ${cy}px))`;
+  e.preventDefault();
+}
+function jEnd() {
+  active = false; cx = 0; cy = 0;
+  knob.style.transform = 'translate(-50%,-50%)';
+  publishMove(0, 0);
+  mqttClient?.publish(CFG.cmdStopTopic, JSON.stringify({ reason: 'joystick_release' }), { qos: 1 });
+}
+
+zone.addEventListener('mousedown', jStart);
+window.addEventListener('mousemove', jMove);
+window.addEventListener('mouseup', jEnd);
+zone.addEventListener('touchstart', jStart, { passive: false });
+window.addEventListener('touchmove', jMove, { passive: false });
+window.addEventListener('touchend', jEnd);
+
+// Publish joystick position at 10Hz
+setInterval(() => {
+  if (active) publishMove(cx / R, -(cy / R));
+}, 100);
+
+// ── Keyboard ─────────────────────────────────────
+const keys = new Set();
+setInterval(() => {
+  let x = 0, y = 0;
+  if (keys.has('ArrowUp')    || keys.has('w')) y =  0.8;
+  if (keys.has('ArrowDown')  || keys.has('s')) y = -0.8;
+  if (keys.has('ArrowLeft')  || keys.has('a')) x = -0.6;
+  if (keys.has('ArrowRight') || keys.has('d')) x =  0.6;
+  if (x || y) publishMove(x, y);
+}, 100);
+document.addEventListener('keydown', e => {
+  keys.add(e.key);
+  if (e.key === ' ') { e.preventDefault(); mqttClient?.publish(CFG.cmdStopTopic, '{}', { qos: 1 }); }
+});
+document.addEventListener('keyup', e => keys.delete(e.key));
+
+// ── Start ─────────────────────────────────────────
+connectStream();
+connectMqtt();
+
+// Reconnect on tab focus
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !vid.srcObject) connectStream();
+});
+</script>
+</body>
+</html>
