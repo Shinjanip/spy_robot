@@ -18,8 +18,8 @@ MQTT_PASS      = "MySecurePass123"
 MQTT_CLIENT_ID = "spyrobot-pi-001"
 
 # GPIO pins (BCM) — L298N
-L_FWD, L_BWD, L_PWM = 19, 19, 26
-R_FWD, R_BWD, R_PWM = 20, 20, 21
+L_FWD, L_BWD, L_PWM = 16, 16, 20
+R_FWD, R_BWD, R_PWM = 13, 13, 26
 
 pwm_left = pwm_right = None
 speed_pct = 60.0   # updated by robot/cmd/speed from the slider
