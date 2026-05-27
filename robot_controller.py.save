@@ -1,4 +1,4 @@
-import json, signal, sys, logging, subprocess, threading, time
+import json, signal, sys, logging
 import paho.mqtt.client as mqtt
 
 try:
@@ -17,14 +17,12 @@ MQTT_USER      = "spyrobot"
 MQTT_PASS      = "MySecurePass123"
 MQTT_CLIENT_ID = "spyrobot-pi-001"
 
-MEDIAMTX_HOST  = "192.168.1.12"   # laptop IP running MediaMTX
-
 # GPIO pins (BCM) — L298N
-L_FWD, L_BWD, L_PWM = 16, 16, 20
-R_FWD, R_BWD, R_PWM = 13, 13, 26
+L_FWD, L_BWD, L_PWM = 19, 19, 26
+R_FWD, R_BWD, R_PWM = 20, 20, 21
 
 pwm_left = pwm_right = None
-speed_pct = 60.0
+speed_pct = 60.0   # updated by robot/cmd/speed from the slider
 
 # ── GPIO ──────────────────────────────────────────────────
 def setup_gpio():
@@ -39,7 +37,11 @@ def setup_gpio():
     pwm_right.start(0)
     log.info("GPIO ready")
 
-def _drive(speed, fwd, bwd, pwm):
+palsh@LAPPY:~/mediamtx-server/spyrobot/server$ docker compose ps
+NAME                IMAGE                        COMMAND                  SERVICE    CREATED      STATUS                     PORTS
+spyrobot-coturn     coturn/coturn:latest         "docker-entrypoint.s…"   coturn     4 days ago   Up 4 minutes (unhealthy)
+spyrobot-mediamtx   bluenviron/mediamtx:latest   "/mediamtx"              mediamtx   4 days ago   Up 4 minutes (unhealthy)   0.0.0.0:8000-8001->8000-8001/udp, [::]:8000-8001->8000-8001/udp, 0.0.0.0:8554->8554/tcp, [::]:8554->8554/tcp, 0.0.0.0:8189->8189/udp, [::]:8189->8189/udp, 0.0.0.0:8888-8889->8888-8889/tcp, [::]:8888-8889->8888-8889/tcp
+spyrobot-nginx      nginx:alpine                 "/docker-entrypoint.…"   nginx      4 days ago   Up 4 minutes (unhealthy)   0.0.0.0:80->80/tcp, [::]:80->80/tcpdef _drive(speed, fwd, bwd, pwm):
     GPIO.output(fwd, GPIO.HIGH if speed > 0 else GPIO.LOW)
     GPIO.output(bwd, GPIO.HIGH if speed < 0 else GPIO.LOW)
     pwm.ChangeDutyCycle(min(abs(speed), 100))
@@ -54,6 +56,9 @@ def set_motors(left, right):
 def stop_motors():
     set_motors(0, 0)
 
+# ── Joystick x,y → left/right motor speeds ───────────────
+# Dashboard sends x (strafe/turn) and y (forward/back), -1..+1
+# speed_pct scales the output so the slider is respected
 def xy_to_motors(x, y):
     scale = speed_pct / 100.0
     left  = (y + x) * 100 * scale
@@ -63,102 +68,6 @@ def xy_to_motors(x, y):
         left  *= 100 / peak
         right *= 100 / peak
     return left, right
-
-# ── Audio pipelines ───────────────────────────────────────
-# Two independent GStreamer processes:
-#   audio_out: USB mic  → WHIP → MediaMTX  (robot speaks to browser)
-#   audio_in:  WHEP → MediaMTX → MAX98357  (browser speaks to robot)
-#
-# These are started/stopped via MQTT robot/cmd/audio
-# and also auto-started on boot via the systemd service.
-'''
-_audio_out_proc = None   # Pi mic → MediaMTX
-_audio_in_proc  = None   # MediaMTX → Pi speaker
-_audio_lock     = threading.Lock()
-
-WHIP_URL = f"http://{MEDIAMTX_HOST}:8889/spyrobot/audio/out/whip"
-WHEP_URL = f"http://{MEDIAMTX_HOST}:8889/spyrobot/audio/in/whep"
-
-# USB mic device — adjust if arecord -l shows a different card/device
-USB_MIC  = "hw:1,0"
-# MAX98357 I2S speaker via softvol ALSA plugin (defined in /etc/asound.conf)
-I2S_SINK = "softvol"
-
-def _gst_mic_to_mediamtx():
-    """Capture USB mic, sdencode Opus, push to MediaMTX via WHIP."""
-    return [
-        "gst-launch-1.0", "-e",
-        "alsasrc", f"device={USB_MIC}",
-        "!", "audio/x-raw,rate=48000,channels=1",
-        "!", "opusenc", "bitrate=64000",
-        "!", "rtpopuspay", "pt=111",
-        "!", "whipsink",
-        f"whip-endpoint={WHIP_URL}",
-        "name=whip",
-    ]
-
-def _gst_mediamtx_to_speaker():
-    """Pull audio from MediaMTX via WHEP, decode Opus, play on MAX98357."""
-    return [
-        "gst-launch-1.0", "-e",
-        "whepsrc",
-        f"whep-endpoint={WHEP_URL}",
-        "audio-codecs=OPUS/48000/2",
-        "!", "application/x-rtp,payload=111",
-        "!", "rtpopusdepay",
-        "!", "opusdec",
-        "!", "audioconvert",
-        "!", "audioresample",
-        "!", "audio/x-raw,rate=48000,channels=2",
-        "!", "alsasink", f"device={I2S_SINK}",
-    ]
-
-def start_audio():
-    global _audio_out_proc, _audio_in_proc
-    with _audio_lock:
-        if _audio_out_proc is None or _audio_out_proc.poll() is not None:
-            log.info("Starting audio out (mic → MediaMTX)")
-            _audio_out_proc = subprocess.Popen(
-                _gst_mic_to_mediamtx(),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-
-        if _audio_in_proc is None or _audio_in_proc.poll() is not None:
-            log.info("Starting audio in (MediaMTX → speaker)")
-            _audio_in_proc = subprocess.Popen(
-                _gst_mediamtx_to_speaker(),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-
-def stop_audio():
-    global _audio_out_proc, _audio_in_proc
-    with _audio_lock:
-        for proc, name in [(_audio_out_proc, "audio_out"), (_audio_in_proc, "audio_in")]:
-            if proc and proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                log.info(f"Stopped {name}")
-        _audio_out_proc = None
-        _audio_in_proc  = None
-
-def _audio_watchdog():
-    """Restart audio pipelines if they crash."""
-    while True:
-        time.sleep(10)
-        with _audio_lock:
-            out_dead = _audio_out_proc and _audio_out_proc.poll() is not None
-            in_dead  = _audio_in_proc  and _audio_in_proc.poll()  is not None
-        if out_dead or in_dead:
-            log.warning("Audio pipeline crashed — restarting")
-            stop_audio()
-            time.sleep(2)
-            start_audio()
-'''
 
 # ── MQTT callbacks ────────────────────────────────────────
 def on_connect(client, userdata, flags, reason_code, properties=None):
@@ -170,7 +79,6 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
             ("robot/cmd/stop",   1),
             ("robot/cmd/speed",  1),
             ("robot/cmd/camera", 1),
-            ("robot/cmd/audio",  1),
         ])
     else:
         log.error(f"Connect failed: {reason_code}")
@@ -199,13 +107,6 @@ def on_message(client, userdata, msg):
     elif msg.topic == "robot/cmd/camera":
         log.info(f"Camera pan={data.get('pan', 0)} tilt={data.get('tilt', 0)}")
 
-    elif msg.topic == "robot/cmd/audio":
-        # {"enabled": true}  or  {"enabled": false}
-        if data.get("enabled", False):
-            start_audio()
-        else:
-            stop_audio()
-
 def on_disconnect(client, userdata, reason_code, properties=None):
     log.warning(f"Disconnected: {reason_code}")
     stop_motors()
@@ -214,12 +115,6 @@ def on_disconnect(client, userdata, reason_code, properties=None):
 def main():
     if ON_PI:
         setup_gpio()
-
-    # Start audio watchdog thread
-#    threading.Thread(target=_audio_watchdog, daemon=True).start()
-
-    # Auto-start audio on boot
- #   start_audio()
 
     try:
         client = mqtt.Client(
@@ -240,7 +135,6 @@ def main():
 
     def shutdown(sig, frame):
         stop_motors()
-        stop_audio()
         client.disconnect()
         if ON_PI:
             pwm_left.stop()

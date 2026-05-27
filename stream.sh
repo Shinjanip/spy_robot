@@ -2,7 +2,7 @@
 # SpyRobot stream — Raspberry Pi (Bookworm, Camera Module v2)
 # Uses rpicam-vid with built-in TCP socket output → FFmpeg mux → MediaMTX RTSP
 
-MEDIAMTX_HOST="${MEDIAMTX_HOST:-192.168.1.6}"
+MEDIAMTX_HOST="${MEDIAMTX_HOST:-192.168.1.12}"
 MEDIAMTX_PORT="${MEDIAMTX_PORT:-8554}"
 RTSP_URL="rtsp://${MEDIAMTX_HOST}:${MEDIAMTX_PORT}/spyrobot/live"
 
