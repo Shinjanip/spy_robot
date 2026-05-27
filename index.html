@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SpyRobot</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0d1117;
+  color: #e6edf3;
+  font-family: system-ui, sans-serif;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ── */
+header {
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6ff; }
+.pill {
+  display: flex; align-items: center; gap: 6px;
+  background: #21262d; border-radius: 20px;
+  padding: 4px 10px; font-size: 12px; color: #8b949e;
+  margin-left: auto;
+}
+.pill + .pill { margin-left: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #f85149; flex-shrink: 0; }
+.dot.on { background: #3fb950; }
+
+/* ── Video ── */
+#video-wrap {
+  background: #000;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16/9;
+  flex-shrink: 0;
+}
+#video-wrap video {
+  width: 100%; height: 100%;
+  display: block; object-fit: cover;
+}
+#stream-overlay {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px; background: rgba(0,0,0,0.6);
+}
+#stream-msg { font-size: 13px; color: #8b949e; }
+#play-btn {
+  display: none;
+  background: #238636; border: none; color: #fff;
+  padding: 8px 20px; border-radius: 6px;
+  font-size: 14px; cursor: pointer;
+}
+#live-badge {
+  position: absolute; top: 10px; left: 10px;
+  background: #da3633; color: #fff;
+  font-size: 10px; font-weight: 700;
+  padding: 2px 7px; border-radius: 4px; letter-spacing: 1px;
+  display: none;
+}
+#live-badge.on { display: block; background: #2ea043; }
+
+/* ── Controls ── */
+#controls {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px;
+}
+
+/* Speed */
+#speed-row {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; max-width: 340px; font-size: 13px; color: #8b949e;
+}
+#speed-row input { flex: 1; accent-color: #58a6ff; }
+#speed-val { min-width: 36px; text-align: right; color: #e6edf3; font-weight: 600; }
+
+/* Joystick */
+#joy-outer {
+  width: 180px; height: 180px;
+  border-radius: 50%;
+  background: #161b22;
+  border: 2px solid #30363d;
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: crosshair;
+  flex-shrink: 0;
+}
+#joy-outer::before, #joy-outer::after {
+  content: ''; position: absolute;
+  background: #30363d;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+}
+#joy-outer::before { width: 1px; height: 100%; }
+#joy-outer::after  { width: 100%; height: 1px; }
+#joy-knob {
+  width: 60px; height: 60px;
+  border-radius: 50%;
+  background: #58a6ff;
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+#joy-knob.active { background: #1f6feb; }
+
+/* Stop */
+#stop-btn {
+  width: 100%; max-width: 340px;
+  padding: 12px;
+  background: #da3633; border: none;
+  color: #fff; font-size: 16px; font-weight: 700;
+  border-radius: 8px; cursor: pointer; letter-spacing: 1px;
+}
+#stop-btn:active { background: #b91c1c; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SPYROBOT</h1>
+  <div class="pill"><div class="dot" id="stream-dot"></div><span id="stream-label">stream</span></div>
+  <div class="pill"><div class="dot" id="mqtt-dot"></div><span id="mqtt-label">mqtt</span></div>
+</header>
+
+<div id="video-wrap">
+  <video id="vid" autoplay muted playsinline></video>
+  <div id="stream-overlay">
+    <span id="stream-msg">Connecting to stream…</span>
+    <button id="play-btn" onclick="vid.play(); this.style.display='none'">▶ Tap to play</button>
+  </div>
+  <div id="live-badge">LIVE</div>
+</div>
+
+<div id="controls">
+  <div id="speed-row">
+    <span>Speed</span>
+    <input type="range" id="speed-slider" min="10" max="100" value="60">
+    <span id="speed-val">60%</span>
+  </div>
+
+  <div id="joy-outer">
+    <div id="joy-knob"></div>
+  </div>
+
+  <button id="stop-btn">⬛ STOP</button>
+</div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script>
+// ── Config ────────────────────────────────────────────────
+const WHEP_URL  = "http://192.168.1.6:8889/spyrobot/live/whep";
+const MQTT_URL  = "wss://5b5d1fc229d14745991d15a955fef7ca.s1.eu.hivemq.cloud:8884/mqtt";
+const MQTT_USER = "spyrobot";
+const MQTT_PASS = "MySecurePass123";
+
+// ── DOM refs ──────────────────────────────────────────────
+const vid         = document.getElementById("vid");
+const overlay     = document.getElementById("stream-overlay");
+const streamMsg   = document.getElementById("stream-msg");
+const playBtn     = document.getElementById("play-btn");
+const liveBadge   = document.getElementById("live-badge");
+const streamDot   = document.getElementById("stream-dot");
+const streamLabel = document.getElementById("stream-label");
+const mqttDot     = document.getElementById("mqtt-dot");
+const mqttLabel   = document.getElementById("mqtt-label");
+const joyOuter    = document.getElementById("joy-outer");
+const joyKnob     = document.getElementById("joy-knob");
+const stopBtn     = document.getElementById("stop-btn");
+const speedSlider = document.getElementById("speed-slider");
+const speedVal    = document.getElementById("speed-val");
+
+// ── WebRTC / WHEP ─────────────────────────────────────────
+let pc = null;
+let retryDelay = 2000;
+
+function connectStream() {
+  if (pc) { pc.close(); pc = null; }
+
+  streamDot.className = "dot";
+  streamLabel.textContent = "connecting…";
+  streamMsg.textContent = "Connecting to stream…";
+  overlay.style.display = "flex";
+  liveBadge.className = "on" in liveBadge.classList ? "" : "";
+  liveBadge.classList.remove("on");
+
+  pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  });
+
+  // Must add recvonly transceiver before createOffer
+  // so the SDP contains a video media section
+  pc.addTransceiver("video", { direction: "recvonly" });
+
+  pc.ontrack = (e) => {
+    vid.srcObject = e.streams[0];
+    vid.play()
+      .then(() => {
+        overlay.style.display = "none";
+        liveBadge.classList.add("on");
+        streamDot.className = "dot on";
+        streamLabel.textContent = "live";
+        retryDelay = 2000;
+      })
+      .catch(() => {
+        // Autoplay blocked — show tap button
+        streamMsg.textContent = "";
+        playBtn.style.display = "block";
+        liveBadge.classList.add("on");
+        streamDot.className = "dot on";
+        streamLabel.textContent = "live";
+      });
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
+      scheduleRetry();
+    }
+  };
+
+  pc.createOffer()
+    .then(offer => pc.setLocalDescription(offer))
+    .then(() => waitForICE())
+    .then(() => fetch(WHEP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/sdp" },
+      body: pc.localDescription.sdp,
+    }))
+    .then(r => {
+      if (!r.ok) throw new Error("WHEP HTTP " + r.status);
+      return r.text();
+    })
+    .then(sdp => pc.setRemoteDescription({ type: "answer", sdp }))
+    .catch(err => {
+      streamMsg.textContent = "Stream unavailable — retrying…";
+      streamLabel.textContent = "offline";
+      scheduleRetry();
+    });
+}
+
+function waitForICE() {
+  return new Promise(resolve => {
+    if (pc.iceGatheringState === "complete") return resolve();
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === "complete") resolve();
+    };
+    setTimeout(resolve, 3000);
+  });
+}
+
+function scheduleRetry() {
+  setTimeout(connectStream, retryDelay);
+  retryDelay = Math.min(retryDelay * 1.5, 16000);
+}
+
+// Reconnect when tab becomes visible again
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && (!vid.srcObject || vid.readyState === 0)) {
+    connectStream();
+  }
+});
+
+// ── MQTT ─────────────────────────────────────────────────
+let mqttClient = null;
+let lastPub = 0;
+let speedPct = 60;
+
+function connectMqtt() {
+  mqttClient = mqtt.connect(MQTT_URL, {
+    username:        MQTT_USER,
+    password:        MQTT_PASS,
+    clientId:        "dashboard-" + Math.random().toString(36).slice(2, 8),
+    reconnectPeriod: 3000,
+    keepalive:       30,
+  });
+
+  mqttClient.on("connect", () => {
+    mqttDot.className = "dot on";
+    mqttLabel.textContent = "connected";
+  });
+
+  mqttClient.on("close", () => {
+    mqttDot.className = "dot";
+    mqttLabel.textContent = "reconnecting…";
+  });
+}
+
+function pubMove(x, y) {
+  const now = Date.now();
+  if (now - lastPub < 100) return;   // max 10 Hz
+  lastPub = now;
+  if (!mqttClient?.connected) return;
+  mqttClient.publish("robot/cmd/move",
+    JSON.stringify({ x: +x.toFixed(3), y: +y.toFixed(3) }), { qos: 0 });
+}
+
+function pubStop() {
+  if (!mqttClient?.connected) return;
+  mqttClient.publish("robot/cmd/stop", JSON.stringify({ reason: "button" }), { qos: 1 });
+}
+
+function pubSpeed(v) {
+  if (!mqttClient?.connected) return;
+  mqttClient.publish("robot/cmd/speed", JSON.stringify({ speed: v }), { qos: 1 });
+}
+
+// ── Speed slider ──────────────────────────────────────────
+speedSlider.addEventListener("input", () => {
+  speedPct = parseInt(speedSlider.value);
+  speedVal.textContent = speedPct + "%";
+  pubSpeed(speedPct);
+});
+
+// ── Joystick ──────────────────────────────────────────────
+const R = 90;       // radius px (half of 180px circle)
+const DEAD = 8;     // dead zone px
+
+let dragging = false, ox = 0, oy = 0, kx = 0, ky = 0;
+
+joyOuter.addEventListener("pointerdown", e => {
+  dragging = true;
+  joyKnob.classList.add("active");
+  joyOuter.setPointerCapture(e.pointerId);
+  const r = joyOuter.getBoundingClientRect();
+  ox = r.left + r.width  / 2;
+  oy = r.top  + r.height / 2;
+  move(e);
+  e.preventDefault();
+});
+
+joyOuter.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  move(e);
+  e.preventDefault();
+});
+
+joyOuter.addEventListener("pointerup",     release);
+joyOuter.addEventListener("pointercancel", release);
+
+function move(e) {
+  const dx = e.clientX - ox, dy = e.clientY - oy;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  const clamp = Math.min(dist, R);
+  const angle = Math.atan2(dy, dx);
+  kx = Math.cos(angle) * clamp;
+  ky = Math.sin(angle) * clamp;
+  joyKnob.style.transform = `translate(calc(-50% + ${kx}px), calc(-50% + ${ky}px))`;
+}
+
+function release() {
+  if (!dragging) return;
+  dragging = false;
+  kx = 0; ky = 0;
+  joyKnob.classList.remove("active");
+  joyKnob.style.transform = "translate(-50%, -50%)";
+  pubMove(0, 0);
+  pubStop();
+}
+
+// Publish joystick at 10 Hz while dragging
+setInterval(() => {
+  if (!dragging) return;
+  const x = -(Math.abs(kx) > DEAD ? kx / R : 0);
+  const y = (Math.abs(ky) > DEAD ? ky / R : 0);
+  pubMove(x, y);
+}, 100);
+
+// ── Stop button ───────────────────────────────────────────
+stopBtn.addEventListener("click", () => { pubStop(); });
+
+// ── Keyboard (WASD / arrows) ──────────────────────────────
+const keys = new Set();
+document.addEventListener("keydown", e => {
+  keys.add(e.key);
+  if (e.key === " ") { e.preventDefault(); pubStop(); }
+});
+document.addEventListener("keyup", e => keys.delete(e.key));
+
+setInterval(() => {
+  let x = 0, y = 0;
+  if (keys.has("ArrowUp")    || keys.has("w")) y = -0.8;
+  if (keys.has("ArrowDown")  || keys.has("s")) y = 0.8;
+  if (keys.has("ArrowLeft")  || keys.has("a")) x = 0.6;
+  if (keys.has("ArrowRight") || keys.has("d")) x = -0.6;
+  if (x || y) pubMove(x, y);
+}, 100);
+
+// ── Start ─────────────────────────────────────────────────
+connectStream();
+connectMqtt();
+</script>
+</body>
+</html>
