@@ -21,11 +21,8 @@ header {
   background: #161b22;
   border-bottom: 1px solid #30363d;
   padding: 10px 16px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  flex-wrap: wrap;
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0; flex-wrap: wrap;
 }
 header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6ff; margin-right: 4px; }
 .pill {
@@ -38,11 +35,8 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
 
 /* ── Video ── */
 #video-wrap {
-  background: #000;
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16/9;
-  flex-shrink: 0;
+  background: #000; position: relative;
+  width: 100%; aspect-ratio: 16/9; flex-shrink: 0;
 }
 #video-wrap video { width: 100%; height: 100%; display: block; object-fit: cover; }
 #stream-overlay {
@@ -68,15 +62,9 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
 
 /* ── Controls ── */
 #controls {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; gap: 12px; padding: 14px 16px;
 }
-
-/* Row utility */
 .row {
   display: flex; align-items: center; gap: 10px;
   width: 100%; max-width: 340px;
@@ -85,14 +73,11 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
 .row input[type=range] { flex: 1; accent-color: #58a6ff; }
 .row-val { min-width: 36px; text-align: right; color: #e6edf3; font-weight: 600; }
 
-/* Joystick */
+/* ── Joystick ── */
 #joy-outer {
-  width: 180px; height: 180px;
-  border-radius: 50%;
-  background: #161b22;
-  border: 2px solid #30363d;
-  position: relative;
-  touch-action: none;
+  width: 180px; height: 180px; border-radius: 50%;
+  background: #161b22; border: 2px solid #30363d;
+  position: relative; touch-action: none;
   user-select: none; -webkit-user-select: none;
   cursor: crosshair; flex-shrink: 0;
 }
@@ -111,7 +96,7 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
 }
 #joy-knob.active { background: #1f6feb; }
 
-/* Stop */
+/* ── Stop ── */
 #stop-btn {
   width: 100%; max-width: 340px;
   padding: 12px; background: #da3633; border: none;
@@ -123,39 +108,37 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
 /* ── Audio panel ── */
 #audio-panel {
   width: 100%; max-width: 340px;
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 10px;
-  padding: 12px 14px;
+  background: #161b22; border: 1px solid #30363d;
+  border-radius: 10px; padding: 12px 14px;
   display: flex; flex-direction: column; gap: 10px;
 }
 #audio-panel .panel-title {
   font-size: 11px; font-weight: 600; letter-spacing: 1px;
   text-transform: uppercase; color: #8b949e;
-  margin-bottom: 2px;
 }
 
-/* Mic mute button */
-#mic-btn {
-  width: 100%;
-  padding: 9px;
+/* Enable mic button */
+#enable-mic-btn {
+  width: 100%; padding: 10px;
   background: #238636; border: none;
   color: #fff; font-size: 13px; font-weight: 600;
   border-radius: 7px; cursor: pointer;
 }
-#mic-btn.muted { background: #da3633; }
-#mic-btn:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+#enable-mic-btn:disabled {
+  background: #21262d; color: #484f58; cursor: not-allowed;
+}
 
-/* Meter */
-#meter-wrap {
-  height: 6px; background: #21262d; border-radius: 3px; overflow: hidden;
+/* Mute toggle button */
+#mute-btn {
+  width: 100%; padding: 10px;
+  border: none; font-size: 13px; font-weight: 600;
+  border-radius: 7px; cursor: pointer;
+  display: none;   /* hidden until mic is enabled */
 }
-#meter-bar {
-  height: 100%; width: 0%;
-  background: #3fb950;
-  border-radius: 3px;
-  transition: width 0.05s linear;
-}
+/* Unmuted = sending to robot (green) */
+#mute-btn.unmuted  { background: #238636; color: #fff; }
+/* Muted = listening to robot (blue) */
+#mute-btn.muted    { background: #1f6feb; color: #fff; }
 </style>
 </head>
 <body>
@@ -178,37 +161,34 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
 
 <div id="controls">
 
-  <!-- Motor speed -->
   <div class="row">
     <span>Speed</span>
     <input type="range" id="speed-slider" min="10" max="100" value="60">
     <span class="row-val" id="speed-val">60%</span>
   </div>
 
-  <!-- Joystick -->
   <div id="joy-outer"><div id="joy-knob"></div></div>
 
-  <!-- Stop -->
   <button id="stop-btn">⬛ STOP</button>
 
-  <!-- Audio panel -->
   <div id="audio-panel">
     <div class="panel-title">🎙 Audio</div>
 
-    <!-- Mic mute -->
-    <button id="mic-btn" disabled>Enable microphone</button>
+    <!--
+      Step 1: click "Enable Microphone" once → browser asks for permission,
+              mic stream is acquired, WHIP connection to robot is established.
+              Button is then replaced by the mute toggle.
 
-    <!-- Mic input level meter -->
-    <div id="meter-wrap"><div id="meter-bar"></div></div>
+      Step 2: "Mute" button toggles between two modes:
+        UNMUTED (green) → laptop mic is active, audio goes to robot speaker.
+                          Robot mic audio is muted in browser (half-duplex TX).
+        MUTED   (blue)  → laptop mic track is disabled, no audio sent to robot.
+                          Robot mic audio plays in browser (listen mode).
+    -->
+    <button id="enable-mic-btn">🎙 Enable Microphone</button>
+    <button id="mute-btn" class="unmuted">🔇 Mute (stop sending)</button>
 
-    <!-- Mic gain -->
-    <div class="row">
-      <span>Mic gain</span>
-      <input type="range" id="mic-gain" min="0" max="3" step="0.05" value="1">
-      <span class="row-val" id="mic-gain-val">1.0×</span>
-    </div>
-
-    <!-- Robot speaker volume (controls the <audio> element playing back robot audio) -->
+    <!-- Robot speaker volume -->
     <div class="row">
       <span>Speaker</span>
       <input type="range" id="spk-vol" min="0" max="1" step="0.05" value="0.8">
@@ -218,56 +198,43 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
 
 </div>
 
-<!-- Hidden audio element plays robot mic audio received via WebRTC -->
 <audio id="robot-audio" autoplay playsinline></audio>
 
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script>
-// ═══════════════════════════════════════════════════════
-// CONFIG
-// ═══════════════════════════════════════════════════════
-const MEDIAMTX    = "192.168.1.12";
-// Video: robot camera → browser
-const WHEP_VIDEO  = `http://${MEDIAMTX}:8889/spyrobot/live/whep`;
-// Audio out: robot USB mic → browser  (browser receives)
-const WHEP_AUDIO  = `http://${MEDIAMTX}:8889/spyrobot/audio/out/whep`;
-// Audio in:  browser mic → robot speaker  (browser sends)
-const WHIP_AUDIO  = `http://${MEDIAMTX}:8889/spyrobot/audio/in/whip`;
+// ── Config ────────────────────────────────────────────────
+const MEDIAMTX   = "192.168.1.2";
+const WHEP_VIDEO = `http://${MEDIAMTX}:8889/spyrobot/live/whep`;
+const WHEP_AUDIO = `http://${MEDIAMTX}:8889/spyrobot/audio/out/whep`;
+const WHIP_AUDIO = `http://${MEDIAMTX}:8889/spyrobot/audio/in/whip`;
+const MQTT_URL   = "wss://5b5d1fc229d14745991d15a955fef7ca.s1.eu.hivemq.cloud:8884/mqtt";
+const MQTT_USER  = "spyrobot";
+const MQTT_PASS  = "MySecurePass123";
 
-const MQTT_URL  = "wss://5b5d1fc229d14745991d15a955fef7ca.s1.eu.hivemq.cloud:8884/mqtt";
-const MQTT_USER = "spyrobot";
-const MQTT_PASS = "MySecurePass123";
+// ── DOM ───────────────────────────────────────────────────
+const vid          = document.getElementById("vid");
+const overlay      = document.getElementById("stream-overlay");
+const streamMsg    = document.getElementById("stream-msg");
+const playBtn      = document.getElementById("play-btn");
+const liveBadge    = document.getElementById("live-badge");
+const streamDot    = document.getElementById("stream-dot");
+const streamLbl    = document.getElementById("stream-label");
+const mqttDot      = document.getElementById("mqtt-dot");
+const mqttLbl      = document.getElementById("mqtt-label");
+const audioDot     = document.getElementById("audio-dot");
+const audioLbl     = document.getElementById("audio-label");
+const joyOuter     = document.getElementById("joy-outer");
+const joyKnob      = document.getElementById("joy-knob");
+const stopBtn      = document.getElementById("stop-btn");
+const speedSlider  = document.getElementById("speed-slider");
+const speedVal     = document.getElementById("speed-val");
+const spkVol       = document.getElementById("spk-vol");
+const spkVolVal    = document.getElementById("spk-vol-val");
+const robotAudio   = document.getElementById("robot-audio");
+const enableMicBtn = document.getElementById("enable-mic-btn");
+const muteBtn      = document.getElementById("mute-btn");
 
-// ═══════════════════════════════════════════════════════
-// DOM
-// ═══════════════════════════════════════════════════════
-const vid        = document.getElementById("vid");
-const overlay    = document.getElementById("stream-overlay");
-const streamMsg  = document.getElementById("stream-msg");
-const playBtn    = document.getElementById("play-btn");
-const liveBadge  = document.getElementById("live-badge");
-const streamDot  = document.getElementById("stream-dot");
-const streamLbl  = document.getElementById("stream-label");
-const mqttDot    = document.getElementById("mqtt-dot");
-const mqttLbl    = document.getElementById("mqtt-label");
-const audioDot   = document.getElementById("audio-dot");
-const audioLbl   = document.getElementById("audio-label");
-const joyOuter   = document.getElementById("joy-outer");
-const joyKnob    = document.getElementById("joy-knob");
-const stopBtn    = document.getElementById("stop-btn");
-const speedSlider= document.getElementById("speed-slider");
-const speedVal   = document.getElementById("speed-val");
-const micBtn     = document.getElementById("mic-btn");
-const meterBar   = document.getElementById("meter-bar");
-const micGain    = document.getElementById("mic-gain");
-const micGainVal = document.getElementById("mic-gain-val");
-const spkVol     = document.getElementById("spk-vol");
-const spkVolVal  = document.getElementById("spk-vol-val");
-const robotAudio = document.getElementById("robot-audio");
-
-// ═══════════════════════════════════════════════════════
-// VIDEO — WHEP (receive only)
-// ═══════════════════════════════════════════════════════
+// ── VIDEO — WHEP receive ──────────────────────────────────
 let videoPc = null, videoRetry = 2000;
 
 function connectVideo() {
@@ -300,7 +267,10 @@ function connectVideo() {
   };
 
   videoPc.oniceconnectionstatechange = () => {
-    if (["failed","disconnected"].includes(videoPc.iceConnectionState)) retryVideo();
+    if (["failed","disconnected"].includes(videoPc.iceConnectionState)) {
+      setTimeout(connectVideo, videoRetry);
+      videoRetry = Math.min(videoRetry * 1.5, 16000);
+    }
   };
 
   videoPc.createOffer()
@@ -313,21 +283,18 @@ function connectVideo() {
     }))
     .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
     .then(sdp => videoPc.setRemoteDescription({ type: "answer", sdp }))
-    .catch(() => { streamLbl.textContent = "offline"; retryVideo(); });
-}
-
-function retryVideo() {
-  setTimeout(connectVideo, videoRetry);
-  videoRetry = Math.min(videoRetry * 1.5, 16000);
+    .catch(() => {
+      streamLbl.textContent = "offline";
+      setTimeout(connectVideo, videoRetry);
+      videoRetry = Math.min(videoRetry * 1.5, 16000);
+    });
 }
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && (!vid.srcObject || vid.readyState === 0)) connectVideo();
 });
 
-// ═══════════════════════════════════════════════════════
-// AUDIO OUT — receive robot mic via WHEP
-// ═══════════════════════════════════════════════════════
+// ── AUDIO OUT — receive robot mic via WHEP (always on) ────
 let audioPcOut = null, audioOutRetry = 3000;
 
 function connectAudioOut() {
@@ -364,127 +331,122 @@ function connectAudioOut() {
     .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
     .then(sdp => audioPcOut.setRemoteDescription({ type: "answer", sdp }))
     .catch(() => {
-      // Robot audio stream may not be up yet — retry silently
       setTimeout(connectAudioOut, audioOutRetry);
       audioOutRetry = Math.min(audioOutRetry * 1.5, 20000);
     });
 }
 
-// ═══════════════════════════════════════════════════════
-// AUDIO IN — send browser mic to robot via WHIP
-// ═══════════════════════════════════════════════════════
-let audioPcIn   = null;
-let micStream   = null;
-let audioCtx    = null;
-let gainNode    = null;
-let analyser    = null;
-let micMuted    = false;
-let meterRaf    = null;
+// ── AUDIO IN — send laptop mic to robot via WHIP ──────────
+let audioPcIn  = null;
+let micStream  = null;   // kept alive for the page lifetime after first enable
+let micEnabled = false;  // true once getUserMedia succeeds
+let micMuted   = false;  // current mute state
 
 async function enableMic() {
+  enableMicBtn.disabled  = true;
+  enableMicBtn.textContent = "Requesting mic…";
+
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 },
+      video: false,
+    });
   } catch (err) {
-    micBtn.textContent = "Mic access denied";
+    enableMicBtn.disabled  = false;
+    enableMicBtn.textContent = "❌ Mic denied — retry";
     return;
   }
 
-  // Web Audio graph: source → gain → analyser → destination (for meter)
-  audioCtx  = new AudioContext();
-  const src = audioCtx.createMediaStreamSource(micStream);
-  gainNode  = audioCtx.createGain();
-  analyser  = audioCtx.createAnalyser();
-  analyser.fftSize = 256;
-  src.connect(gainNode);
-  gainNode.connect(analyser);
-  gainNode.gain.value = parseFloat(micGain.value);
-
-  // Use a separate MediaStream for the WHIP track (post-gain)
-  const dest      = audioCtx.createMediaStreamDestination();
-  gainNode.connect(dest);
-  const gainedStream = dest.stream;
-
-  // WHIP peer connection — send only
+  // Build WHIP peer connection
   audioPcIn = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-  gainedStream.getAudioTracks().forEach(t => audioPcIn.addTrack(t, gainedStream));
+  micStream.getAudioTracks().forEach(t => audioPcIn.addTrack(t, micStream));
 
-  const offer = await audioPcIn.createOffer();
-  await audioPcIn.setLocalDescription(offer);
-  await waitICE(audioPcIn);
+  audioPcIn.oniceconnectionstatechange = () => {
+    if (["failed","disconnected","closed"].includes(audioPcIn.iceConnectionState)) {
+      muteBtn.textContent = "⚠️ Audio disconnected";
+    }
+  };
 
-  const resp = await fetch(WHIP_AUDIO, {
-    method: "POST",
-    headers: { "Content-Type": "application/sdp" },
-    body: audioPcIn.localDescription.sdp,
-  });
+  try {
+    const offer = await audioPcIn.createOffer();
+    await audioPcIn.setLocalDescription(offer);
+    await waitICE(audioPcIn);
 
-  if (resp.ok) {
+    const resp = await fetch(WHIP_AUDIO, {
+      method:  "POST",
+      headers: { "Content-Type": "application/sdp" },
+      body:    audioPcIn.localDescription.sdp,
+    });
+
+    if (!resp.ok) throw new Error("WHIP " + resp.status);
     const sdp = await resp.text();
     await audioPcIn.setRemoteDescription({ type: "answer", sdp });
-    micBtn.textContent = "🎙 Mute mic";
-    micBtn.classList.remove("muted");
-    micMuted = false;
-    startMeter();
-    // Tell Pi to enable its speaker pipeline via MQTT
-    pubAudio(true);
-  } else {
-    micBtn.textContent = "WHIP error — retry";
+
+  } catch (err) {
+    enableMicBtn.disabled  = false;
+    enableMicBtn.textContent = "❌ Connection failed — retry";
+    return;
   }
+
+  // Success — swap buttons and start unmuted (sending to robot)
+  micEnabled = true;
+  micMuted   = false;
+  enableMicBtn.style.display = "none";
+  muteBtn.style.display      = "block";
+  applyMuteState();
 }
 
-function toggleMic() {
-  if (!micStream) { enableMic(); return; }
+function toggleMute() {
+  if (!micEnabled) return;
   micMuted = !micMuted;
-  micStream.getAudioTracks().forEach(t => t.enabled = !micMuted);
-  micBtn.textContent  = micMuted ? "🔇 Unmute mic" : "🎙 Mute mic";
-  micBtn.classList.toggle("muted", micMuted);
+  applyMuteState();
 }
 
-function startMeter() {
-  const buf = new Uint8Array(analyser.frequencyBinCount);
-  function tick() {
-    analyser.getByteFrequencyData(buf);
-    const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
-    meterBar.style.width = Math.min(avg * 2, 100) + "%";
-    meterBar.style.background = avg > 60 ? "#f85149" : avg > 30 ? "#d29922" : "#3fb950";
-    meterRaf = requestAnimationFrame(tick);
+function applyMuteState() {
+  if (micMuted) {
+    // MUTED — disable mic track, unmute robot audio (listen mode)
+    micStream.getAudioTracks().forEach(t => { t.enabled = false; });
+    robotAudio.muted   = false;
+    muteBtn.className  = "muted";
+    muteBtn.textContent = "🎙 Unmute (start sending)";
+  } else {
+    // UNMUTED — enable mic track, mute robot audio (talk mode, half-duplex)
+    micStream.getAudioTracks().forEach(t => { t.enabled = true; });
+    robotAudio.muted   = true;
+    muteBtn.className  = "unmuted";
+    muteBtn.textContent = "🔇 Mute (stop sending)";
   }
-  tick();
 }
 
-micBtn.disabled = false;
-micBtn.textContent = "🎙 Enable mic";
-micBtn.addEventListener("click", toggleMic);
+enableMicBtn.addEventListener("click", enableMic);
+muteBtn.addEventListener("click", toggleMute);
 
-// ── Mic gain slider ───────────────────────────────────────
-micGain.addEventListener("input", () => {
-  const v = parseFloat(micGain.value);
-  micGainVal.textContent = v.toFixed(2) + "×";
-  if (gainNode) gainNode.gain.value = v;
+// Keyboard: M to toggle mute
+document.addEventListener("keydown", e => {
+  if (e.key === "m" && micEnabled) toggleMute();
 });
 
-// ── Speaker volume slider ─────────────────────────────────
+// ── Speaker volume ────────────────────────────────────────
 spkVol.addEventListener("input", () => {
   const v = parseFloat(spkVol.value);
   spkVolVal.textContent = Math.round(v * 100) + "%";
-  robotAudio.volume = v;
+  // Only update volume if not muted by half-duplex logic
+  if (micMuted || !micEnabled) robotAudio.volume = v;
 });
 
-// ═══════════════════════════════════════════════════════
-// SHARED ICE HELPER
-// ═══════════════════════════════════════════════════════
+// ── ICE helper ────────────────────────────────────────────
 function waitICE(pc) {
   return new Promise(resolve => {
     if (pc.iceGatheringState === "complete") return resolve();
-    pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === "complete") resolve(); };
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === "complete") resolve();
+    };
     setTimeout(resolve, 3000);
   });
 }
 
-// ═══════════════════════════════════════════════════════
-// MQTT
-// ═══════════════════════════════════════════════════════
-let mqttClient = null, lastPub = 0, speedPct = 60;
+// ── MQTT ──────────────────────────────────────────────────
+let mqttClient = null, lastPub = 0;
 
 function connectMqtt() {
   mqttClient = mqtt.connect(MQTT_URL, {
@@ -500,27 +462,21 @@ function pub(topic, payload, qos = 0) {
   if (!mqttClient?.connected) return;
   mqttClient.publish(topic, JSON.stringify(payload), { qos });
 }
-
 function pubMove(x, y) {
   const now = Date.now();
   if (now - lastPub < 100) return;
   lastPub = now;
   pub("robot/cmd/move", { x: +x.toFixed(3), y: +y.toFixed(3) });
 }
-function pubStop()      { pub("robot/cmd/stop",  { reason: "button" }, 1); }
-function pubSpeed(v)    { pub("robot/cmd/speed", { speed: v }, 1); }
-function pubAudio(on)   { pub("robot/cmd/audio", { enabled: on }, 1); }
+function pubStop()   { pub("robot/cmd/stop",  { reason: "button" }, 1); }
+function pubSpeed(v) { pub("robot/cmd/speed", { speed: v }, 1); }
 
-// ── Speed slider ──────────────────────────────────────────
 speedSlider.addEventListener("input", () => {
-  speedPct = parseInt(speedSlider.value);
-  speedVal.textContent = speedPct + "%";
-  pubSpeed(speedPct);
+  speedVal.textContent = speedSlider.value + "%";
+  pubSpeed(parseInt(speedSlider.value));
 });
 
-// ═══════════════════════════════════════════════════════
-// JOYSTICK
-// ═══════════════════════════════════════════════════════
+// ── Joystick ──────────────────────────────────────────────
 const R = 90, DEAD = 8;
 let dragging = false, ox = 0, oy = 0, kx = 0, ky = 0;
 
@@ -533,20 +489,18 @@ joyOuter.addEventListener("pointerdown", e => {
   oy = r.top  + r.height / 2;
   moveKnob(e); e.preventDefault();
 });
-joyOuter.addEventListener("pointermove", e => { if (!dragging) return; moveKnob(e); e.preventDefault(); });
+joyOuter.addEventListener("pointermove",   e => { if (!dragging) return; moveKnob(e); e.preventDefault(); });
 joyOuter.addEventListener("pointerup",     release);
 joyOuter.addEventListener("pointercancel", release);
 
 function moveKnob(e) {
   const dx = e.clientX - ox, dy = e.clientY - oy;
   const dist = Math.sqrt(dx*dx + dy*dy);
-  const clamp = Math.min(dist, R);
-  const angle = Math.atan2(dy, dx);
-  kx = Math.cos(angle) * clamp;
-  ky = Math.sin(angle) * clamp;
+  const c = Math.min(dist, R), a = Math.atan2(dy, dx);
+  kx = Math.cos(a) * c;
+  ky = Math.sin(a) * c;
   joyKnob.style.transform = `translate(calc(-50% + ${kx}px), calc(-50% + ${ky}px))`;
 }
-
 function release() {
   if (!dragging) return;
   dragging = false; kx = 0; ky = 0;
@@ -554,23 +508,20 @@ function release() {
   joyKnob.style.transform = "translate(-50%, -50%)";
   pubMove(0, 0); pubStop();
 }
-
 setInterval(() => {
   if (!dragging) return;
   pubMove(
-    Math.abs(kx) > DEAD ? kx / R : 0,
-    Math.abs(ky) > DEAD ? -(ky / R) : 0
+    Math.abs(kx) > DEAD ?  kx / R : 0,
+    Math.abs(ky) > DEAD ? -ky / R : 0
   );
 }, 100);
 
 stopBtn.addEventListener("click", pubStop);
 
-// ── Keyboard ──────────────────────────────────────────────
 const keys = new Set();
 document.addEventListener("keydown", e => {
   keys.add(e.key);
   if (e.key === " ") { e.preventDefault(); pubStop(); }
-  if (e.key === "m") toggleMic();
 });
 document.addEventListener("keyup", e => keys.delete(e.key));
 setInterval(() => {
@@ -582,11 +533,9 @@ setInterval(() => {
   if (x || y) pubMove(x, y);
 }, 100);
 
-// ═══════════════════════════════════════════════════════
-// START
-// ═══════════════════════════════════════════════════════
+// ── Start ─────────────────────────────────────────────────
 connectVideo();
-connectAudioOut();   // start receiving robot mic immediately
+connectAudioOut();
 connectMqtt();
 </script>
 </body>
