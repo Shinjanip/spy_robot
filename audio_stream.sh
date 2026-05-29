@@ -1,14 +1,14 @@
 #!/bin/bash
 # Two-way audio using FFmpeg + RTSP (works with MediaMTX)
 
-MEDIAMTX_HOST="${MEDIAMTX_HOST:-192.168.1.12}"
+MEDIAMTX_HOST="${MEDIAMTX_HOST:-192.168.1.2}"
 RTSP_BASE="rtsp://${MEDIAMTX_HOST}:8554"
 
 # USB microphone – adjust after `arecord -l`
-USB_MIC="hw:1,0"
+USB_MIC="hw:2,0"
 
 # Speaker output – uses ALSA softvol as default
-SPEAKER="default"
+SPEAKER="softvol"
 
 # === OUT: Pi microphone → MediaMTX → Browser ===
 # Push USB mic as RTSP stream
