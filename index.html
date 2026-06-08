@@ -1,1 +1,558 @@
 
+<<<<<<< Updated upstream
+=======
+body {
+  background: #0d1117;
+  color: #e6edf3;
+  font-family: system-ui, sans-serif;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6ff; margin-right: 4px; }
+.pill {
+  display: flex; align-items: center; gap: 6px;
+  background: #21262d; border-radius: 20px;
+  padding: 4px 10px; font-size: 12px; color: #8b949e;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #f85149; flex-shrink: 0; }
+.dot.on { background: #3fb950; }
+
+#video-wrap {
+  background: #000;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16/9;
+  flex-shrink: 0;
+}
+#video-wrap video { width: 100%; height: 100%; display: block; object-fit: cover; }
+#stream-overlay {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px; background: rgba(0,0,0,0.6);
+}
+#stream-msg { font-size: 13px; color: #8b949e; }
+#play-btn {
+  display: none;
+  background: #238636; border: none; color: #fff;
+  padding: 8px 20px; border-radius: 6px; font-size: 14px; cursor: pointer;
+}
+#live-badge {
+  position: absolute; top: 10px; left: 10px;
+  background: #da3633; color: #fff;
+  font-size: 10px; font-weight: 700;
+  padding: 2px 7px; border-radius: 4px; letter-spacing: 1px;
+  display: none;
+}
+#live-badge.on { display: block; background: #2ea043; }
+
+#controls {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.row {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; max-width: 340px;
+  font-size: 13px; color: #8b949e;
+}
+.row input[type=range] { flex: 1; accent-color: #58a6ff; }
+.row-val { min-width: 36px; text-align: right; color: #e6edf3; font-weight: 600; }
+
+#joy-outer {
+  width: 180px; height: 180px;
+  border-radius: 50%;
+  background: #161b22;
+  border: 2px solid #30363d;
+  position: relative;
+  touch-action: none;
+  user-select: none; -webkit-user-select: none;
+  cursor: crosshair; flex-shrink: 0;
+}
+#joy-outer::before, #joy-outer::after {
+  content: ''; position: absolute; background: #30363d;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+}
+#joy-outer::before { width: 1px; height: 100%; }
+#joy-outer::after  { width: 100%; height: 1px; }
+#joy-knob {
+  width: 60px; height: 60px; border-radius: 50%;
+  background: #58a6ff;
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+#joy-knob.active { background: #1f6feb; }
+
+#stop-btn {
+  width: 100%; max-width: 340px;
+  padding: 12px; background: #da3633; border: none;
+  color: #fff; font-size: 16px; font-weight: 700;
+  border-radius: 8px; cursor: pointer; letter-spacing: 1px;
+}
+#stop-btn:active { background: #b91c1c; }
+
+#audio-panel {
+  width: 100%; max-width: 340px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+#audio-panel .panel-title {
+  font-size: 11px; font-weight: 600; letter-spacing: 1px;
+  text-transform: uppercase; color: #8b949e;
+  margin-bottom: 2px;
+}
+
+#mic-btn {
+  width: 100%;
+  padding: 9px;
+  background: #238636; border: none;
+  color: #fff; font-size: 13px; font-weight: 600;
+  border-radius: 7px; cursor: pointer;
+}
+#mic-btn.muted { background: #da3633; }
+#mic-btn:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+
+#meter-wrap { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+#meter-bar {
+  height: 100%; width: 0%;
+  background: #3fb950; border-radius: 3px;
+  transition: width 0.05s linear;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SPYROBOT</h1>
+  <div class="pill"><div class="dot" id="stream-dot"></div><span id="stream-label">stream</span></div>
+  <div class="pill"><div class="dot" id="mqtt-dot"></div><span id="mqtt-label">mqtt</span></div>
+  <div class="pill"><div class="dot" id="audio-dot"></div><span id="audio-label">audio</span></div>
+</header>
+
+<div id="video-wrap">
+  <video id="vid" autoplay muted playsinline></video>
+  <div id="stream-overlay">
+    <span id="stream-msg">Connecting to stream…</span>
+    <button id="play-btn" onclick="vid.play(); this.style.display='none'">▶ Tap to play</button>
+  </div>
+  <div id="live-badge">LIVE</div>
+</div>
+
+<div id="controls">
+  <div class="row">
+    <span>Speed</span>
+    <input type="range" id="speed-slider" min="10" max="100" value="60">
+    <span class="row-val" id="speed-val">60%</span>
+  </div>
+
+  <div id="joy-outer"><div id="joy-knob"></div></div>
+
+  <button id="stop-btn">⬛ STOP</button>
+
+  <div id="audio-panel">
+    <div class="panel-title">🎙 Audio</div>
+    <button id="mic-btn" disabled>Enable microphone</button>
+    <div id="meter-wrap"><div id="meter-bar"></div></div>
+    <div class="row">
+      <span>Mic gain</span>
+      <input type="range" id="mic-gain" min="0" max="3" step="0.05" value="1">
+      <span class="row-val" id="mic-gain-val">1.0×</span>
+    </div>
+    <div class="row">
+      <span>Speaker</span>
+      <input type="range" id="spk-vol" min="0" max="1" step="0.05" value="0.8">
+      <span class="row-val" id="spk-vol-val">80%</span>
+    </div>
+  </div>
+</div>
+
+<audio id="robot-audio" autoplay playsinline></audio>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════
+// WebSocket base – relative path works for any host/protocol
+const WS_BASE = "/api/ws";
+
+const MQTT_URL  = "wss://5b5d1fc229d14745991d15a955fef7ca.s1.eu.hivemq.cloud:8884/mqtt";
+const MQTT_USER = "spyrobot";
+const MQTT_PASS = "MySecurePass123";
+
+// ═══════════════════════════════════════════════════════
+// DOM
+// ═══════════════════════════════════════════════════════
+const vid         = document.getElementById("vid");
+const overlay     = document.getElementById("stream-overlay");
+const streamMsg   = document.getElementById("stream-msg");
+const playBtn     = document.getElementById("play-btn");
+const liveBadge   = document.getElementById("live-badge");
+const streamDot   = document.getElementById("stream-dot");
+const streamLbl   = document.getElementById("stream-label");
+const mqttDot     = document.getElementById("mqtt-dot");
+const mqttLbl     = document.getElementById("mqtt-label");
+const audioDot    = document.getElementById("audio-dot");
+const audioLbl    = document.getElementById("audio-label");
+const joyOuter    = document.getElementById("joy-outer");
+const joyKnob     = document.getElementById("joy-knob");
+const stopBtn     = document.getElementById("stop-btn");
+const speedSlider = document.getElementById("speed-slider");
+const speedVal    = document.getElementById("speed-val");
+const micBtn      = document.getElementById("mic-btn");
+const meterBar    = document.getElementById("meter-bar");
+const micGain     = document.getElementById("mic-gain");
+const micGainVal  = document.getElementById("mic-gain-val");
+const spkVol      = document.getElementById("spk-vol");
+const spkVolVal   = document.getElementById("spk-vol-val");
+const robotAudio  = document.getElementById("robot-audio");
+
+// ═══════════════════════════════════════════════════════
+// CORE: WebSocket-based WebRTC signalling (go2rtc native)
+// ═══════════════════════════════════════════════════════
+function connectWS(params, setupPC, onTrack, onOpen, onClose) {
+  const url  = `${WS_BASE}?${params}`;
+  const ws   = new WebSocket(url);
+  let pc     = null;
+
+  ws.addEventListener("open", async () => {
+    pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+
+    // Forward ICE candidates
+    pc.addEventListener("icecandidate", ev => {
+      if (!ev.candidate) return;
+      ws.send(JSON.stringify({ type: "webrtc/candidate", value: ev.candidate.candidate }));
+    });
+
+    // Track handler
+    pc.addEventListener("track", ev => onTrack && onTrack(ev));
+
+    // Let caller add transceivers / tracks
+    await setupPC(pc);
+
+    // Create and send offer
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({ type: "webrtc/offer", value: pc.localDescription.sdp }));
+
+    onOpen && onOpen(pc, ws);
+  });
+
+  ws.addEventListener("message", ev => {
+    const msg = JSON.parse(ev.data);
+    if (!pc) return;
+    if (msg.type === "webrtc/answer") {
+      pc.setRemoteDescription({ type: "answer", sdp: msg.value });
+    } else if (msg.type === "webrtc/candidate") {
+      pc.addIceCandidate({ candidate: msg.value, sdpMid: "0" }).catch(() => {});
+    }
+  });
+
+  ws.addEventListener("close", () => {
+    if (pc) { pc.close(); pc = null; }
+    onClose && onClose();
+  });
+
+  ws.addEventListener("error", () => ws.close());
+
+  return ws;
+}
+
+// ═══════════════════════════════════════════════════════
+// VIDEO — receive spy_cam
+// ═══════════════════════════════════════════════════════
+let videoWs = null, videoRetry = 2000;
+
+function connectVideo() {
+  if (videoWs) { videoWs.close(); videoWs = null; }
+  streamDot.className = "dot";
+  streamLbl.textContent = "connecting…";
+  streamMsg.textContent = "Connecting to stream…";
+  overlay.style.display = "flex";
+  liveBadge.classList.remove("on");
+
+  videoWs = connectWS(
+    "src=spy_cam",
+    pc => {
+      pc.addTransceiver("video", { direction: "recvonly" });
+    },
+    ev => {
+      vid.srcObject = ev.streams[0];
+      vid.play()
+        .then(() => {
+          overlay.style.display = "none";
+          liveBadge.classList.add("on");
+          streamDot.className = "dot on";
+          streamLbl.textContent = "live";
+          videoRetry = 2000;
+        })
+        .catch(() => {
+          streamMsg.textContent = "";
+          playBtn.style.display = "block";
+          streamDot.className = "dot on";
+          streamLbl.textContent = "live";
+        });
+    },
+    null,
+    () => {
+      // WebSocket closed — retry
+      streamDot.className = "dot";
+      streamLbl.textContent = "offline";
+      setTimeout(connectVideo, videoRetry);
+      videoRetry = Math.min(videoRetry * 1.5, 16000);
+    }
+  );
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && (!vid.srcObject || vid.readyState === 0)) connectVideo();
+});
+
+// ═══════════════════════════════════════════════════════
+// AUDIO OUT — receive spy_mic
+// ═══════════════════════════════════════════════════════
+let audioOutWs = null, audioOutRetry = 3000;
+
+function connectAudioOut() {
+  if (audioOutWs) { audioOutWs.close(); audioOutWs = null; }
+
+  audioOutWs = connectWS(
+    "src=spy_mic",
+    pc => {
+      pc.addTransceiver("audio", { direction: "recvonly" });
+    },
+    ev => {
+      robotAudio.srcObject = ev.streams[0];
+      robotAudio.volume = parseFloat(spkVol.value);
+      robotAudio.play().catch(() => {});
+      audioDot.className = "dot on";
+      audioLbl.textContent = "rx audio";
+      audioOutRetry = 3000;
+    },
+    null,
+    () => {
+      audioDot.className = "dot";
+      setTimeout(connectAudioOut, audioOutRetry);
+      audioOutRetry = Math.min(audioOutRetry * 1.5, 20000);
+    }
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// AUDIO IN — send browser mic to speaker_in
+// ═══════════════════════════════════════════════════════
+let audioInWs  = null;
+let micStream  = null;
+let audioCtx   = null;
+let gainNode   = null;
+let analyser   = null;
+let micMuted   = false;
+
+async function enableMic() {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch {
+    micBtn.textContent = "Mic access denied";
+    return;
+  }
+
+  audioCtx  = new AudioContext();
+  const src = audioCtx.createMediaStreamSource(micStream);
+  gainNode  = audioCtx.createGain();
+  analyser  = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+  src.connect(gainNode);
+  gainNode.connect(analyser);
+  gainNode.gain.value = parseFloat(micGain.value);
+
+  const dest         = audioCtx.createMediaStreamDestination();
+  gainNode.connect(dest);
+  const gainedStream = dest.stream;
+
+  audioInWs = connectWS(
+    "dst=speaker_in",
+    pc => {
+      gainedStream.getAudioTracks().forEach(t => pc.addTrack(t, gainedStream));
+    },
+    null,
+    (pc, ws) => {
+      micBtn.textContent = "🎙 Mute mic";
+      micBtn.classList.remove("muted");
+      micMuted = false;
+      startMeter();
+      pubAudio(true);
+    },
+    () => {
+      // disconnected
+    }
+  );
+}
+
+function toggleMic() {
+  if (!micStream) { enableMic(); return; }
+  micMuted = !micMuted;
+  micStream.getAudioTracks().forEach(t => t.enabled = !micMuted);
+  micBtn.textContent = micMuted ? "🔇 Unmute mic" : "🎙 Mute mic";
+  micBtn.classList.toggle("muted", micMuted);
+}
+
+function startMeter() {
+  const buf = new Uint8Array(analyser.frequencyBinCount);
+  function tick() {
+    analyser.getByteFrequencyData(buf);
+    const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+    meterBar.style.width = Math.min(avg * 2, 100) + "%";
+    meterBar.style.background = avg > 60 ? "#f85149" : avg > 30 ? "#d29922" : "#3fb950";
+    requestAnimationFrame(tick);
+  }
+  tick();
+}
+
+micBtn.disabled = false;
+micBtn.textContent = "🎙 Enable mic";
+micBtn.addEventListener("click", toggleMic);
+
+micGain.addEventListener("input", () => {
+  const v = parseFloat(micGain.value);
+  micGainVal.textContent = v.toFixed(2) + "×";
+  if (gainNode) gainNode.gain.value = v;
+});
+
+spkVol.addEventListener("input", () => {
+  const v = parseFloat(spkVol.value);
+  spkVolVal.textContent = Math.round(v * 100) + "%";
+  robotAudio.volume = v;
+});
+
+// ═══════════════════════════════════════════════════════
+// MQTT
+// ═══════════════════════════════════════════════════════
+let mqttClient = null, lastPub = 0, speedPct = 60;
+
+function connectMqtt() {
+  mqttClient = mqtt.connect(MQTT_URL, {
+    username: MQTT_USER, password: MQTT_PASS,
+    clientId: "dashboard-" + Math.random().toString(36).slice(2, 8),
+    reconnectPeriod: 3000, keepalive: 30,
+  });
+  mqttClient.on("connect", () => { mqttDot.className = "dot on"; mqttLbl.textContent = "connected"; });
+  mqttClient.on("close",   () => { mqttDot.className = "dot";    mqttLbl.textContent = "reconnecting…"; });
+}
+
+function pub(topic, payload, qos = 0) {
+  if (!mqttClient?.connected) return;
+  mqttClient.publish(topic, JSON.stringify(payload), { qos });
+}
+
+function pubMove(x, y) {
+  const now = Date.now();
+  if (now - lastPub < 100) return;
+  lastPub = now;
+  pub("robot/cmd/move", { x: +x.toFixed(3), y: +y.toFixed(3) });
+}
+function pubStop()    { pub("robot/cmd/stop",  { reason: "button" }, 1); }
+function pubSpeed(v)  { pub("robot/cmd/speed", { speed: v }, 1); }
+function pubAudio(on) { pub("robot/cmd/audio", { enabled: on }, 1); }
+
+speedSlider.addEventListener("input", () => {
+  speedPct = parseInt(speedSlider.value);
+  speedVal.textContent = speedPct + "%";
+  pubSpeed(speedPct);
+});
+
+// ═══════════════════════════════════════════════════════
+// JOYSTICK
+// ═══════════════════════════════════════════════════════
+const R = 90, DEAD = 8;
+let dragging = false, ox = 0, oy = 0, kx = 0, ky = 0;
+
+joyOuter.addEventListener("pointerdown", e => {
+  dragging = true;
+  joyKnob.classList.add("active");
+  joyOuter.setPointerCapture(e.pointerId);
+  const r = joyOuter.getBoundingClientRect();
+  ox = r.left + r.width / 2;
+  oy = r.top  + r.height / 2;
+  moveKnob(e); e.preventDefault();
+});
+joyOuter.addEventListener("pointermove", e => { if (!dragging) return; moveKnob(e); e.preventDefault(); });
+joyOuter.addEventListener("pointerup",     release);
+joyOuter.addEventListener("pointercancel", release);
+
+function moveKnob(e) {
+  const dx = e.clientX - ox, dy = e.clientY - oy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const clamp = Math.min(dist, R);
+  const angle = Math.atan2(dy, dx);
+  kx = Math.cos(angle) * clamp;
+  ky = Math.sin(angle) * clamp;
+  joyKnob.style.transform = `translate(calc(-50% + ${kx}px), calc(-50% + ${ky}px))`;
+}
+
+function release() {
+  if (!dragging) return;
+  dragging = false; kx = 0; ky = 0;
+  joyKnob.classList.remove("active");
+  joyKnob.style.transform = "translate(-50%, -50%)";
+  pubMove(0, 0); pubStop();
+}
+
+setInterval(() => {
+  if (!dragging) return;
+  pubMove(
+    Math.abs(kx) > DEAD ? kx / R : 0,
+    Math.abs(ky) > DEAD ? -(ky / R) : 0
+  );
+}, 100);
+
+stopBtn.addEventListener("click", pubStop);
+
+// ── Keyboard ─────────────────────────────────────────────
+const keys = new Set();
+document.addEventListener("keydown", e => {
+  keys.add(e.key);
+  if (e.key === " ") { e.preventDefault(); pubStop(); }
+  if (e.key === "m") toggleMic();
+});
+document.addEventListener("keyup", e => keys.delete(e.key));
+setInterval(() => {
+  let x = 0, y = 0;
+  if (keys.has("ArrowUp")    || keys.has("w")) y =  0.8;
+  if (keys.has("ArrowDown")  || keys.has("s")) y = -0.8;
+  if (keys.has("ArrowLeft")  || keys.has("a")) x = -0.6;
+  if (keys.has("ArrowRight") || keys.has("d")) x =  0.6;
+  if (x || y) pubMove(x, y);
+}, 100);
+
+// ═══════════════════════════════════════════════════════
+// START
+// ═══════════════════════════════════════════════════════
+connectVideo();
+connectAudioOut();
+connectMqtt();
+</script>
+</body>
+</html>
+>>>>>>> Stashed changes
