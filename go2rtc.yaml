@@ -1,0 +1,15 @@
+api:
+  listen: ":1984"
+  static_dir: /home/raspberry4/go2rtc/www
+
+streams:
+  spy_cam:
+    - exec:rpicam-vid -t 0 --inline --width 1280 --height 720 -o -
+    - exec:ffmpeg -f alsa -i plughw:1,0 -c:a libopus -b:a 32k -ar 48000 -ac 1 -f rtsp -rtsp_transport tcp {output}
+  speaker_in:
+    - alsa:plughw:2,0
+webrtc:
+  listen: ":8555/tcp"
+  candidates:
+   - 115.96.154.109:8555
+    - stun:8555
