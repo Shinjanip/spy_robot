@@ -64,101 +64,7 @@ def xy_to_motors(x, y):
         right *= 100 / peak
     return left, right
 
-# ── Audio pipelines ───────────────────────────────────────
-# Two independent GStreamer processes:
-#   audio_out: USB mic  → WHIP → MediaMTX  (robot speaks to browser)
-#   audio_in:  WHEP → MediaMTX → MAX98357  (browser speaks to robot)
-#
-# These are started/stopped via MQTT robot/cmd/audio
-# and also auto-started on boot via the systemd service.
-'''
-_audio_out_proc = None   # Pi mic → MediaMTX
-_audio_in_proc  = None   # MediaMTX → Pi speaker
-_audio_lock     = threading.Lock()
 
-WHIP_URL = f"http://{MEDIAMTX_HOST}:8889/spyrobot/audio/out/whip"
-WHEP_URL = f"http://{MEDIAMTX_HOST}:8889/spyrobot/audio/in/whep"
-
-# USB mic device — adjust if arecord -l shows a different card/device
-USB_MIC  = "hw:1,0"
-# MAX98357 I2S speaker via softvol ALSA plugin (defined in /etc/asound.conf)
-I2S_SINK = "softvol"
-
-def _gst_mic_to_mediamtx():
-    """Capture USB mic, sdencode Opus, push to MediaMTX via WHIP."""
-    return [
-        "gst-launch-1.0", "-e",
-        "alsasrc", f"device={USB_MIC}",
-        "!", "audio/x-raw,rate=48000,channels=1",
-        "!", "opusenc", "bitrate=64000",
-        "!", "rtpopuspay", "pt=111",
-        "!", "whipsink",
-        f"whip-endpoint={WHIP_URL}",
-        "name=whip",
-    ]
-
-def _gst_mediamtx_to_speaker():
-    """Pull audio from MediaMTX via WHEP, decode Opus, play on MAX98357."""
-    return [
-        "gst-launch-1.0", "-e",
-        "whepsrc",
-        f"whep-endpoint={WHEP_URL}",
-        "audio-codecs=OPUS/48000/2",
-        "!", "application/x-rtp,payload=111",
-        "!", "rtpopusdepay",
-        "!", "opusdec",
-        "!", "audioconvert",
-        "!", "audioresample",
-        "!", "audio/x-raw,rate=48000,channels=2",
-        "!", "alsasink", f"device={I2S_SINK}",
-    ]
-
-def start_audio():
-    global _audio_out_proc, _audio_in_proc
-    with _audio_lock:
-        if _audio_out_proc is None or _audio_out_proc.poll() is not None:
-            log.info("Starting audio out (mic → MediaMTX)")
-            _audio_out_proc = subprocess.Popen(
-                _gst_mic_to_mediamtx(),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-
-        if _audio_in_proc is None or _audio_in_proc.poll() is not None:
-            log.info("Starting audio in (MediaMTX → speaker)")
-            _audio_in_proc = subprocess.Popen(
-                _gst_mediamtx_to_speaker(),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-
-def stop_audio():
-    global _audio_out_proc, _audio_in_proc
-    with _audio_lock:
-        for proc, name in [(_audio_out_proc, "audio_out"), (_audio_in_proc, "audio_in")]:
-            if proc and proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                log.info(f"Stopped {name}")
-        _audio_out_proc = None
-        _audio_in_proc  = None
-
-def _audio_watchdog():
-    """Restart audio pipelines if they crash."""
-    while True:
-        time.sleep(10)
-        with _audio_lock:
-            out_dead = _audio_out_proc and _audio_out_proc.poll() is not None
-            in_dead  = _audio_in_proc  and _audio_in_proc.poll()  is not None
-        if out_dead or in_dead:
-            log.warning("Audio pipeline crashed — restarting")
-            stop_audio()
-            time.sleep(2)
-            start_audio()
-'''
 
 # ── MQTT callbacks ────────────────────────────────────────
 def on_connect(client, userdata, flags, reason_code, properties=None):
@@ -170,7 +76,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
             ("robot/cmd/stop",   1),
             ("robot/cmd/speed",  1),
             ("robot/cmd/camera", 1),
-            ("robot/cmd/audio",  1),
+          #  ("robot/cmd/audio",  1),
         ])
     else:
         log.error(f"Connect failed: {reason_code}")
