@@ -1,6 +1,12 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SpyRobot</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
-<<<<<<< Updated upstream
-=======
 body {
   background: #0d1117;
   color: #e6edf3;
@@ -186,15 +192,15 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
   </div>
 </div>
 
-<audio id="robot-audio" autoplay playsinline></audio>
+<audio id="robot-audio" playsinline></audio>
 
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════
-// WebSocket base – relative path works for any host/protocol
-const WS_BASE = "/api/ws";
+const WS_BASE = (location.protocol === "https:" ? "wss:" : "ws:")
+              + "//" + location.host + "/api/ws";
 
 const MQTT_URL  = "wss://5b5d1fc229d14745991d15a955fef7ca.s1.eu.hivemq.cloud:8884/mqtt";
 const MQTT_USER = "spyrobot";
@@ -228,31 +234,38 @@ const spkVolVal   = document.getElementById("spk-vol-val");
 const robotAudio  = document.getElementById("robot-audio");
 
 // ═══════════════════════════════════════════════════════
+// Unlock audio on first user interaction (browser autoplay policy)
+// ═══════════════════════════════════════════════════════
+let audioUnlocked = false;
+document.addEventListener("click", () => {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  if (robotAudio.srcObject) {
+    robotAudio.play().catch(() => {});
+  }
+}, { capture: true });
+
+// ═══════════════════════════════════════════════════════
 // CORE: WebSocket-based WebRTC signalling (go2rtc native)
 // ═══════════════════════════════════════════════════════
 function connectWS(params, setupPC, onTrack, onOpen, onClose) {
-  const url  = `${WS_BASE}?${params}`;
-  const ws   = new WebSocket(url);
-  let pc     = null;
+  const ws = new WebSocket(`${WS_BASE}?${params}`);
+  let pc   = null;
 
   ws.addEventListener("open", async () => {
     pc = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
     });
 
-    // Forward ICE candidates
     pc.addEventListener("icecandidate", ev => {
       if (!ev.candidate) return;
       ws.send(JSON.stringify({ type: "webrtc/candidate", value: ev.candidate.candidate }));
     });
 
-    // Track handler
     pc.addEventListener("track", ev => onTrack && onTrack(ev));
 
-    // Let caller add transceivers / tracks
     await setupPC(pc);
 
-    // Create and send offer
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     ws.send(JSON.stringify({ type: "webrtc/offer", value: pc.localDescription.sdp }));
@@ -281,7 +294,9 @@ function connectWS(params, setupPC, onTrack, onOpen, onClose) {
 }
 
 // ═══════════════════════════════════════════════════════
-// VIDEO — receive spy_cam
+// VIDEO + AUDIO — receive spy_cam (video) + spy_mic (audio)
+// Both come through a single WebSocket to spy_cam which has
+// both video and audio sources attached in go2rtc.yaml
 // ═══════════════════════════════════════════════════════
 let videoWs = null, videoRetry = 2000;
 
@@ -296,30 +311,48 @@ function connectVideo() {
   videoWs = connectWS(
     "src=spy_cam",
     pc => {
+      // Request both video and audio from spy_cam
       pc.addTransceiver("video", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "recvonly" });
     },
     ev => {
-      vid.srcObject = ev.streams[0];
-      vid.play()
-        .then(() => {
-          overlay.style.display = "none";
-          liveBadge.classList.add("on");
-          streamDot.className = "dot on";
-          streamLbl.textContent = "live";
-          videoRetry = 2000;
-        })
-        .catch(() => {
-          streamMsg.textContent = "";
-          playBtn.style.display = "block";
-          streamDot.className = "dot on";
-          streamLbl.textContent = "live";
-        });
+      if (ev.track.kind === "video") {
+        vid.srcObject = ev.streams[0];
+        vid.play()
+          .then(() => {
+            overlay.style.display = "none";
+            liveBadge.classList.add("on");
+            streamDot.className = "dot on";
+            streamLbl.textContent = "live";
+            videoRetry = 2000;
+          })
+          .catch(() => {
+            streamMsg.textContent = "";
+            playBtn.style.display = "block";
+            streamDot.className = "dot on";
+            streamLbl.textContent = "live";
+          });
+      } else if (ev.track.kind === "audio") {
+        // Attach robot mic audio to the <audio> element
+        robotAudio.srcObject = ev.streams[0];
+        robotAudio.volume = parseFloat(spkVol.value);
+        robotAudio.play()
+          .then(() => {
+            audioDot.className = "dot on";
+            audioLbl.textContent = "rx audio";
+          })
+          .catch(() => {
+            // Autoplay blocked — will play on next user click
+            audioDot.className = "dot on";
+            audioLbl.textContent = "tap to hear";
+          });
+      }
     },
     null,
     () => {
-      // WebSocket closed — retry
       streamDot.className = "dot";
       streamLbl.textContent = "offline";
+      audioDot.className = "dot";
       setTimeout(connectVideo, videoRetry);
       videoRetry = Math.min(videoRetry * 1.5, 16000);
     }
@@ -331,50 +364,21 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// AUDIO OUT — receive spy_mic
-// ═══════════════════════════════════════════════════════
-let audioOutWs = null, audioOutRetry = 3000;
-
-function connectAudioOut() {
-  if (audioOutWs) { audioOutWs.close(); audioOutWs = null; }
-
-  audioOutWs = connectWS(
-    "src=spy_mic",
-    pc => {
-      pc.addTransceiver("audio", { direction: "recvonly" });
-    },
-    ev => {
-      robotAudio.srcObject = ev.streams[0];
-      robotAudio.volume = parseFloat(spkVol.value);
-      robotAudio.play().catch(() => {});
-      audioDot.className = "dot on";
-      audioLbl.textContent = "rx audio";
-      audioOutRetry = 3000;
-    },
-    null,
-    () => {
-      audioDot.className = "dot";
-      setTimeout(connectAudioOut, audioOutRetry);
-      audioOutRetry = Math.min(audioOutRetry * 1.5, 20000);
-    }
-  );
-}
-
-// ═══════════════════════════════════════════════════════
 // AUDIO IN — send browser mic to speaker_in
 // ═══════════════════════════════════════════════════════
-let audioInWs  = null;
-let micStream  = null;
-let audioCtx   = null;
-let gainNode   = null;
-let analyser   = null;
-let micMuted   = false;
+let audioInWs = null;
+let micStream = null;
+let audioCtx  = null;
+let gainNode  = null;
+let analyser  = null;
+let micMuted  = false;
 
 async function enableMic() {
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-  } catch {
+  } catch (err) {
     micBtn.textContent = "Mic access denied";
+    console.error("getUserMedia failed:", err);
     return;
   }
 
@@ -393,20 +397,16 @@ async function enableMic() {
 
   audioInWs = connectWS(
     "dst=speaker_in",
-    pc => {
-      gainedStream.getAudioTracks().forEach(t => pc.addTrack(t, gainedStream));
-    },
+    pc => { gainedStream.getAudioTracks().forEach(t => pc.addTrack(t, gainedStream)); },
     null,
-    (pc, ws) => {
+    () => {
       micBtn.textContent = "🎙 Mute mic";
       micBtn.classList.remove("muted");
       micMuted = false;
       startMeter();
       pubAudio(true);
     },
-    () => {
-      // disconnected
-    }
+    () => { /* disconnected */ }
   );
 }
 
@@ -550,9 +550,7 @@ setInterval(() => {
 // START
 // ═══════════════════════════════════════════════════════
 connectVideo();
-connectAudioOut();
 connectMqtt();
 </script>
 </body>
 </html>
->>>>>>> Stashed changes
