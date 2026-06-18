@@ -186,11 +186,10 @@ card** despite "no credit card" marketing. Three options on the table:
    never billed under 1,000 GB.
 
 ### Known issues / TODO
-- **WebSocket idle timeout:** Cloudflare drops idle WebSockets (~100 s). The
-  signalling WS goes idle once WebRTC connects, and `index.html` currently closes
-  the peer connection on WS close → a needless video reconnect every ~100 s.
-  Fix: send a keepalive over the WS and/or don't tear down an already-connected
-  `pc`. (Not yet applied.)
+- ~~**WebSocket idle timeout**~~ ✅ FIXED (`bda88df`): `connectWS` now keeps the
+  WS warm with a 25 s keepalive and drives reconnect from the peer-connection
+  state instead of the WS close, so Cloudflare's ~100 s idle timeout no longer
+  blips a working stream.
 - **Motor wiring:** FWD/BWD share a GPIO per side — reverse may not work; verify.
 - **Battery telemetry:** not implemented.
 - **LiDAR is single-beam** (front only); left/right are `null`. Mount on a servo
