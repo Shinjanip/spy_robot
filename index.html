@@ -335,6 +335,18 @@ document.addEventListener("click", () => {
 function connectWS(params, setupPC, onTrack, onOpen, onClose) {
   const ws = new WebSocket(`${WS_BASE}?${params}`);
   let pc   = null;
+  let keepalive = null;
+  let done = false;
+
+  // Tear down once and hand back to the caller (which may reconnect).
+  function finish() {
+    if (done) return;
+    done = true;
+    if (keepalive) { clearInterval(keepalive); keepalive = null; }
+    if (pc) { try { pc.close(); } catch (_) {} pc = null; }
+    try { ws.close(); } catch (_) {}
+    onClose && onClose();
+  }
 
   ws.addEventListener("open", async () => {
     pc = new RTCPeerConnection({
@@ -343,11 +355,17 @@ function connectWS(params, setupPC, onTrack, onOpen, onClose) {
     });
 
     pc.addEventListener("icecandidate", ev => {
-      if (!ev.candidate) return;
-      ws.send(JSON.stringify({ type: "webrtc/candidate", value: ev.candidate.candidate }));
+      if (ev.candidate && ws.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({ type: "webrtc/candidate", value: ev.candidate.candidate }));
     });
 
     pc.addEventListener("track", ev => onTrack && onTrack(ev));
+
+    // Reconnect is driven by the MEDIA connection, not the signalling WS — so
+    // Cloudflare closing the idle WS (~100s) no longer kills a working stream.
+    pc.addEventListener("connectionstatechange", () => {
+      if (pc && pc.connectionState === "failed") finish();
+    });
 
     await setupPC(pc);
 
@@ -355,11 +373,18 @@ function connectWS(params, setupPC, onTrack, onOpen, onClose) {
     await pc.setLocalDescription(offer);
     ws.send(JSON.stringify({ type: "webrtc/offer", value: pc.localDescription.sdp }));
 
+    // Keep the WS warm so Cloudflare doesn't drop it during long sessions.
+    keepalive = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({ type: "keepalive" }));   // unknown type → go2rtc ignores it
+    }, 25000);
+
     onOpen && onOpen(pc, ws);
   });
 
   ws.addEventListener("message", ev => {
-    const msg = JSON.parse(ev.data);
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
     if (!pc) return;
     if (msg.type === "webrtc/answer") {
       pc.setRemoteDescription({ type: "answer", sdp: msg.value });
@@ -369,11 +394,15 @@ function connectWS(params, setupPC, onTrack, onOpen, onClose) {
   });
 
   ws.addEventListener("close", () => {
-    if (pc) { pc.close(); pc = null; }
-    onClose && onClose();
+    if (keepalive) { clearInterval(keepalive); keepalive = null; }
+    // If media is already (or still) up, keep it — the WS is only needed for the
+    // initial handshake. Only a close before we connect counts as a failure.
+    const st = pc && pc.connectionState;
+    if (st === "connected" || st === "connecting") return;
+    finish();
   });
 
-  ws.addEventListener("error", () => ws.close());
+  ws.addEventListener("error", () => { try { ws.close(); } catch (_) {} });
 
   return ws;
 }
