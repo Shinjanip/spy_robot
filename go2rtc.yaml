@@ -32,12 +32,19 @@ webrtc:
   #     -H "Content-Type: application/json" \
   #     -d '{"ttl": 172800}'
   # Paste the returned username / credential below (and into index.html).
+  # username/credential are short-lived (~24h). Do NOT commit real values to
+  # this public repo — fill them on the Pi only, ideally via refresh-turn.sh
+  # (cron) which rewrites these two lines and restarts go2rtc.
   ice_servers:
     - urls:
         - stun:stun.cloudflare.com:3478
+        - stun:stun.cloudflare.com:53
     - urls:
-        - turn:turn.cloudflare.com:3478?transport=udp
+        - turn:turnv2.realtime.cloudflare.com:3478?transport=udp
         - turn:turn.cloudflare.com:3478?transport=tcp
         - turns:turn.cloudflare.com:5349?transport=tcp
+        - turn:turn.cloudflare.com:53?transport=udp
+        - turn:turn.cloudflare.com:80?transport=tcp
+        - turns:turn.cloudflare.com:443?transport=tcp
       username: PASTE_CLOUDFLARE_TURN_USERNAME
       credential: PASTE_CLOUDFLARE_TURN_CREDENTIAL
