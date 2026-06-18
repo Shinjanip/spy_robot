@@ -128,21 +128,50 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
   margin-bottom: 2px;
 }
 
-#mic-btn {
+.audio-btn {
   width: 100%;
   padding: 9px;
   background: #238636; border: none;
   color: #fff; font-size: 13px; font-weight: 600;
   border-radius: 7px; cursor: pointer;
+  touch-action: none; user-select: none; -webkit-user-select: none;
 }
-#mic-btn.muted { background: #da3633; }
-#mic-btn:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+.audio-btn.muted   { background: #da3633; }
+.audio-btn.talking { background: #1f6feb; box-shadow: 0 0 0 3px rgba(31,111,235,0.35); }
+.audio-btn:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
 
 #meter-wrap { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
 #meter-bar {
   height: 100%; width: 0%;
   background: #3fb950; border-radius: 3px;
   transition: width 0.05s linear;
+}
+.hint { font-size: 11px; color: #6e7681; line-height: 1.4; }
+
+/* ── LiDAR card ── */
+#lidar-panel {
+  width: 100%; max-width: 340px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+#lidar-panel .panel-title {
+  font-size: 11px; font-weight: 600; letter-spacing: 1px;
+  text-transform: uppercase; color: #8b949e;
+}
+.lidar-readout { display: flex; align-items: baseline; gap: 8px; }
+#lidar-dist { font-size: 32px; font-weight: 800; color: #3fb950; line-height: 1; }
+#lidar-dist.warn   { color: #d29922; }
+#lidar-dist.danger { color: #f85149; }
+.lidar-unit { font-size: 14px; color: #8b949e; }
+#lidar-status { margin-left: auto; font-size: 12px; font-weight: 600; color: #8b949e; }
+#lidar-bar-wrap { height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; }
+#lidar-bar {
+  height: 100%; width: 0%;
+  background: #3fb950; border-radius: 4px;
+  transition: width 0.2s linear, background 0.2s;
 }
 </style>
 </head>
@@ -175,9 +204,19 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
 
   <button id="stop-btn">⬛ STOP</button>
 
+  <div id="lidar-panel">
+    <div class="panel-title">📡 LiDAR · obstacle</div>
+    <div class="lidar-readout">
+      <span id="lidar-dist">--</span><span class="lidar-unit">cm</span>
+      <span id="lidar-status">no data</span>
+    </div>
+    <div id="lidar-bar-wrap"><div id="lidar-bar"></div></div>
+  </div>
+
   <div id="audio-panel">
-    <div class="panel-title">🎙 Audio</div>
-    <button id="mic-btn" disabled>Enable microphone</button>
+    <div class="panel-title">🎙 Audio · half-duplex</div>
+    <button id="listen-btn" class="audio-btn">🔊 Listening (tap to mute)</button>
+    <button id="talk-btn" class="audio-btn" disabled>🎙 Hold to talk</button>
     <div id="meter-wrap"><div id="meter-bar"></div></div>
     <div class="row">
       <span>Mic gain</span>
@@ -189,6 +228,9 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
       <input type="range" id="spk-vol" min="0" max="1" step="0.05" value="0.8">
       <span class="row-val" id="spk-vol-val">80%</span>
     </div>
+    <div class="hint">Hold <b>Talk</b> (or hold the <b>T</b> key) to speak.
+      While talking, incoming audio mutes automatically so the robot's mic
+      can't echo your voice back — this stops the feedback howl.</div>
   </div>
 </div>
 
@@ -205,6 +247,44 @@ const WS_BASE = (location.protocol === "https:" ? "wss:" : "ws:")
 const MQTT_URL  = "wss://5b5d1fc229d14745991d15a955fef7ca.s1.eu.hivemq.cloud:8884/mqtt";
 const MQTT_USER = "spyrobot";
 const MQTT_PASS = "MySecurePass123";
+
+// ── Cloudflare TURN ───────────────────────────────────────
+// Required for remote viewers behind CGNAT / without port-forwarding.
+// Paste the username/credential you generated (same pair as go2rtc.yaml).
+// Optional: set TURN_CREDS_URL to a Cloudflare Worker that returns fresh
+// { "username": "...", "credential": "..." } (or { "iceServers": [...] })
+// and it overrides the inline values so they never expire.
+const TURN_CREDS_URL = "";   // e.g. "https://your-worker.workers.dev/turn"
+const ICE_SERVERS = [
+  { urls: "stun:stun.cloudflare.com:3478" },
+  {
+    urls: [
+      "turn:turn.cloudflare.com:3478?transport=udp",
+      "turn:turn.cloudflare.com:3478?transport=tcp",
+      "turns:turn.cloudflare.com:5349?transport=tcp",
+    ],
+    username:   "PASTE_CLOUDFLARE_TURN_USERNAME",
+    credential: "PASTE_CLOUDFLARE_TURN_CREDENTIAL",
+  },
+];
+
+// Fetch fresh TURN credentials if a worker URL is configured, else inline.
+let _iceCache = null;
+async function getIceServers() {
+  if (!TURN_CREDS_URL) return ICE_SERVERS;
+  try {
+    const r = await fetch(TURN_CREDS_URL, { cache: "no-store" });
+    const j = await r.json();
+    if (Array.isArray(j.iceServers)) { _iceCache = j.iceServers; }
+    else if (j.username && j.credential) {
+      _iceCache = ICE_SERVERS.map(s => s.username !== undefined
+        ? { ...s, username: j.username, credential: j.credential } : s);
+    }
+  } catch (e) {
+    console.warn("TURN credential fetch failed, using inline values", e);
+  }
+  return _iceCache || ICE_SERVERS;
+}
 
 // ═══════════════════════════════════════════════════════
 // DOM
@@ -225,8 +305,12 @@ const joyKnob     = document.getElementById("joy-knob");
 const stopBtn     = document.getElementById("stop-btn");
 const speedSlider = document.getElementById("speed-slider");
 const speedVal    = document.getElementById("speed-val");
-const micBtn      = document.getElementById("mic-btn");
+const listenBtn   = document.getElementById("listen-btn");
+const talkBtn     = document.getElementById("talk-btn");
 const meterBar    = document.getElementById("meter-bar");
+const lidarDist   = document.getElementById("lidar-dist");
+const lidarStatus = document.getElementById("lidar-status");
+const lidarBar    = document.getElementById("lidar-bar");
 const micGain     = document.getElementById("mic-gain");
 const micGainVal  = document.getElementById("mic-gain-val");
 const spkVol      = document.getElementById("spk-vol");
@@ -254,7 +338,8 @@ function connectWS(params, setupPC, onTrack, onOpen, onClose) {
 
   ws.addEventListener("open", async () => {
     pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+      iceServers: await getIceServers(),
+      bundlePolicy: "max-bundle",
     });
 
     pc.addEventListener("icecandidate", ev => {
@@ -336,6 +421,7 @@ function connectVideo() {
         // Attach robot mic audio to the <audio> element
         robotAudio.srcObject = ev.streams[0];
         robotAudio.volume = parseFloat(spkVol.value);
+        applyListen();   // honour listen-mute / half-duplex state
         robotAudio.play()
           .then(() => {
             audioDot.className = "dot on";
@@ -364,22 +450,40 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// AUDIO IN — send browser mic to speaker_in
+// AUDIO IN — half-duplex push-to-talk (browser mic → speaker_in)
+// While talking, incoming robot audio is muted to break the echo loop.
 // ═══════════════════════════════════════════════════════
 let audioInWs = null;
 let micStream = null;
 let audioCtx  = null;
 let gainNode  = null;
 let analyser  = null;
-let micMuted  = false;
+let micReady  = false;
+let talking   = false;
+let listening = true;
+let meterRunning = false;
 
-async function enableMic() {
+function applyListen() {
+  // Mute incoming robot audio when not listening, or while we're talking.
+  robotAudio.muted = (!listening) || talking;
+  listenBtn.textContent = listening
+    ? "🔊 Listening (tap to mute)" : "🔇 Muted (tap to listen)";
+  listenBtn.classList.toggle("muted", !listening);
+}
+
+listenBtn.addEventListener("click", () => { listening = !listening; applyListen(); });
+
+async function prepareMic() {
+  if (micReady) return true;
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
   } catch (err) {
-    micBtn.textContent = "Mic access denied";
+    talkBtn.textContent = "Mic access denied";
     console.error("getUserMedia failed:", err);
-    return;
+    return false;
   }
 
   audioCtx  = new AudioContext();
@@ -395,34 +499,51 @@ async function enableMic() {
   gainNode.connect(dest);
   const gainedStream = dest.stream;
 
+  // Start silent — nothing is sent until the user holds Talk.
+  micStream.getAudioTracks().forEach(t => (t.enabled = false));
+
   audioInWs = connectWS(
     "dst=speaker_in",
     pc => { gainedStream.getAudioTracks().forEach(t => pc.addTrack(t, gainedStream)); },
     null,
-    () => {
-      micBtn.textContent = "🎙 Mute mic";
-      micBtn.classList.remove("muted");
-      micMuted = false;
-      startMeter();
-      pubAudio(true);
-    },
-    () => { /* disconnected */ }
+    () => { startMeter(); },
+    () => { audioInWs = null; micReady = false; }   // closed; reopen on next talk
   );
+  micReady = true;
+  return true;
 }
 
-function toggleMic() {
-  if (!micStream) { enableMic(); return; }
-  micMuted = !micMuted;
-  micStream.getAudioTracks().forEach(t => t.enabled = !micMuted);
-  micBtn.textContent = micMuted ? "🔇 Unmute mic" : "🎙 Mute mic";
-  micBtn.classList.toggle("muted", micMuted);
+async function startTalk() {
+  if (talking) return;
+  const ok = await prepareMic();
+  if (!ok) return;
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  talking = true;
+  micStream.getAudioTracks().forEach(t => (t.enabled = true));
+  talkBtn.classList.add("talking");
+  talkBtn.textContent = "🔴 Talking…";
+  applyListen();      // mutes incoming audio (half-duplex)
+  pubAudio(true);
+}
+
+function stopTalk() {
+  if (!talking) return;
+  talking = false;
+  if (micStream) micStream.getAudioTracks().forEach(t => (t.enabled = false));
+  talkBtn.classList.remove("talking");
+  talkBtn.textContent = "🎙 Hold to talk";
+  applyListen();      // restores incoming audio
+  pubAudio(false);
 }
 
 function startMeter() {
+  if (meterRunning) return;
+  meterRunning = true;
   const buf = new Uint8Array(analyser.frequencyBinCount);
   function tick() {
+    if (!analyser) { meterRunning = false; return; }
     analyser.getByteFrequencyData(buf);
-    const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+    const avg = talking ? buf.reduce((a, b) => a + b, 0) / buf.length : 0;
     meterBar.style.width = Math.min(avg * 2, 100) + "%";
     meterBar.style.background = avg > 60 ? "#f85149" : avg > 30 ? "#d29922" : "#3fb950";
     requestAnimationFrame(tick);
@@ -430,9 +551,12 @@ function startMeter() {
   tick();
 }
 
-micBtn.disabled = false;
-micBtn.textContent = "🎙 Enable mic";
-micBtn.addEventListener("click", toggleMic);
+talkBtn.disabled = false;
+talkBtn.addEventListener("pointerdown", e => { e.preventDefault(); startTalk(); });
+talkBtn.addEventListener("pointerup",     stopTalk);
+talkBtn.addEventListener("pointerleave",  stopTalk);
+talkBtn.addEventListener("pointercancel", stopTalk);
+applyListen();
 
 micGain.addEventListener("input", () => {
   const v = parseFloat(micGain.value);
@@ -457,8 +581,46 @@ function connectMqtt() {
     clientId: "dashboard-" + Math.random().toString(36).slice(2, 8),
     reconnectPeriod: 3000, keepalive: 30,
   });
-  mqttClient.on("connect", () => { mqttDot.className = "dot on"; mqttLbl.textContent = "connected"; });
+  mqttClient.on("connect", () => {
+    mqttDot.className = "dot on"; mqttLbl.textContent = "connected";
+    mqttClient.subscribe("robot/telemetry/lidar");
+  });
   mqttClient.on("close",   () => { mqttDot.className = "dot";    mqttLbl.textContent = "reconnecting…"; });
+  mqttClient.on("message", (topic, payload) => {
+    if (topic !== "robot/telemetry/lidar") return;
+    try { renderLidar(JSON.parse(payload.toString())); } catch (_) {}
+  });
+}
+
+// ── LiDAR readout + obstacle warning ──────────────────────
+const LIDAR_MAX_CM = 300;   // full-scale of the distance bar
+function renderLidar(d) {
+  const cm   = d.front_cm;
+  const warn = d.warn_cm ?? 60;
+  const stop = d.stop_cm ?? 25;
+
+  if (cm === undefined || cm === null || cm < 0) {
+    lidarDist.textContent = "--";
+    lidarStatus.textContent = "no data";
+    lidarStatus.style.color = "#8b949e";
+    lidarBar.style.width = "0%";
+    lidarDist.className = "";
+    return;
+  }
+
+  lidarDist.textContent = Math.round(cm);
+  lidarBar.style.width = Math.min(cm / LIDAR_MAX_CM * 100, 100) + "%";
+
+  if (cm < stop) {
+    lidarDist.className = "danger"; lidarBar.style.background = "#f85149";
+    lidarStatus.textContent = "⛔ BLOCKED"; lidarStatus.style.color = "#f85149";
+  } else if (cm < warn) {
+    lidarDist.className = "warn"; lidarBar.style.background = "#d29922";
+    lidarStatus.textContent = "⚠ close"; lidarStatus.style.color = "#d29922";
+  } else {
+    lidarDist.className = ""; lidarBar.style.background = "#3fb950";
+    lidarStatus.textContent = "clear"; lidarStatus.style.color = "#3fb950";
+  }
 }
 
 function pub(topic, payload, qos = 0) {
@@ -534,9 +696,12 @@ const keys = new Set();
 document.addEventListener("keydown", e => {
   keys.add(e.key);
   if (e.key === " ") { e.preventDefault(); pubStop(); }
-  if (e.key === "m") toggleMic();
+  if ((e.key === "t" || e.key === "T") && !e.repeat) startTalk();  // hold to talk
 });
-document.addEventListener("keyup", e => keys.delete(e.key));
+document.addEventListener("keyup", e => {
+  keys.delete(e.key);
+  if (e.key === "t" || e.key === "T") stopTalk();
+});
 setInterval(() => {
   let x = 0, y = 0;
   if (keys.has("ArrowUp")    || keys.has("w")) y =  0.8;

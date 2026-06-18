@@ -8,8 +8,36 @@ streams:
     - exec:ffmpeg -f alsa -i plughw:1,0 -c:a libopus -b:a 32k -ar 48000 -ac 1 -f rtsp -rtsp_transport tcp {output}
   speaker_in:
     - alsa:plughw:2,0
+
 webrtc:
   listen: ":8555/tcp"
+
+  # ICE candidates advertised by go2rtc (the Pi side of the connection).
+  #   stun:8555  -> auto-discover the public IP and advertise a host candidate
+  #                 on TCP 8555. This ONLY helps if your router actually
+  #                 forwards TCP 8555 to the Pi. On most home networks (CGNAT /
+  #                 no port-forward) it cannot be reached from the internet,
+  #                 which is exactly why remote viewers saw connect-then-drop.
   candidates:
-   - 115.96.154.109:8555
     - stun:8555
+
+  # Relay through Cloudflare TURN so media works for remote viewers even
+  # behind CGNAT / without any port forwarding. Both peers (browser AND this
+  # Pi) must use TURN, so the same credentials go here and in index.html.
+  #
+  # Generate credentials (valid up to 48h) once you have a Cloudflare TURN app:
+  #   curl -X POST \
+  #     https://rtc.live.cloudflare.com/v1/turn/keys/<TURN_KEY_ID>/credentials/generate \
+  #     -H "Authorization: Bearer <TURN_API_TOKEN>" \
+  #     -H "Content-Type: application/json" \
+  #     -d '{"ttl": 172800}'
+  # Paste the returned username / credential below (and into index.html).
+  ice_servers:
+    - urls:
+        - stun:stun.cloudflare.com:3478
+    - urls:
+        - turn:turn.cloudflare.com:3478?transport=udp
+        - turn:turn.cloudflare.com:3478?transport=tcp
+        - turns:turn.cloudflare.com:5349?transport=tcp
+      username: PASTE_CLOUDFLARE_TURN_USERNAME
+      credential: PASTE_CLOUDFLARE_TURN_CREDENTIAL
