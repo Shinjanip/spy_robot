@@ -254,7 +254,7 @@ const MQTT_PASS = "MySecurePass123";
 // Optional: set TURN_CREDS_URL to a Cloudflare Worker that returns fresh
 // { "username": "...", "credential": "..." } (or { "iceServers": [...] })
 // and it overrides the inline values so they never expire.
-const TURN_CREDS_URL = "";   // e.g. "https://your-worker.workers.dev/turn"
+const TURN_CREDS_URL = "https://spyrobot-turn.palshinjani.workers.dev";
 const ICE_SERVERS = [
   { urls: "stun:stun.cloudflare.com:3478" },
   {
