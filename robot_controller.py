@@ -11,9 +11,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger()
 
 # ── Config ────────────────────────────────────────────────
-MQTT_HOST      = "5b5d1fc229d14745991d15a955fef7ca.s1.eu.hivemq.cloud"
+MQTT_HOST      = "c10e92cc5b7f4f72b39ac3df0b8c77a7.s1.eu.hivemq.cloud"
 MQTT_PORT      = 8883
-MQTT_USER      = "spyrobot"
+MQTT_USER      = "spyrobot1"
 MQTT_PASS      = "MySecurePass123"
 MQTT_CLIENT_ID = "spyrobot-pi-001"
 
@@ -25,21 +25,39 @@ MQTT_CLIENT_ID = "spyrobot-pi-001"
 #   speed < 0 -> DIR set for reverse, PWM = |speed|
 #   speed = 0 -> PWM = 0 (stop)
 #
-#   LEFT  (both left motors):  DIR = 16, PWM = 20
-#   RIGHT (both right motors): DIR = 13, PWM = 26
-L_DIR, L_PWM = 20, 12     # was 16, 20
-R_DIR, R_PWM = 22, 27     # was 13, 26
-# ── Direction-fix knobs (set these by testing, no rewiring) ──
-# After flashing, drive forward. If a side goes the WRONG way, flip its flag.
+#   LEFT  (both left motors):  DIR = 20, PWM = 21
+#   RIGHT (both right motors): DIR = 22, PWM = 27
+L_DIR, L_PWM = 20, 21
+R_DIR, R_PWM = 22, 27
+
+# ── Direction-fix knobs (set by testing, no rewiring) ──────
+# Drive forward; if a side goes the WRONG way, flip its flag.
 #   False = DIR HIGH is forward (default)
 #   True  = DIR HIGH is reverse
 L_REVERSED = False
 R_REVERSED = False
-# If pushing forward makes it turn (one side swapped), set True to swap sides.
+# If pushing forward makes it turn (sides swapped), set True.
 SWAP_SIDES = False
 
 pwm_left = pwm_right = None
 speed_pct = 60.0
+
+# ── Audio (talk-back via MQTT) ────────────────────────────
+SPEAKER_DEVICE = "plughw:1,0"   # MAX98357A; confirm with `aplay -l`
+VOICE_TOPIC    = "robot/cmd/voice"
+_voice_q   = queue.Queue(maxsize=20)
+_voice_run = True
+
+# ── LiDAR ─────────────────────────────────────────────────
+LIDAR_PORT       = "/dev/serial0"
+LIDAR_BAUD       = 115200
+OBSTACLE_STOP_CM = 25
+OBSTACLE_WARN_CM = 60
+TELEMETRY_HZ     = 5
+
+lidar          = None
+last_front_cm  = -1
+_telemetry_run = True
 
 # ── GPIO ──────────────────────────────────────────────────
 def setup_gpio():
@@ -55,7 +73,6 @@ def setup_gpio():
     log.info("GPIO ready")
 
 def _drive(speed, dir_pin, pwm, reversed_flag):
-    # forward when speed >= 0, unless this side is flagged reversed.
     forward = (speed >= 0) ^ reversed_flag
     GPIO.output(dir_pin, GPIO.HIGH if forward else GPIO.LOW)
     pwm.ChangeDutyCycle(min(abs(speed), 100))
@@ -82,7 +99,6 @@ def xy_to_motors(x, y):
     return left, right
 
 def motor_self_test():
-    # Publish anything to robot/cmd/test to run this. Watch which step moves.
     log.info("TEST left fwd");  set_motors(50, 0);  time.sleep(0.7)
     log.info("TEST left rev");  set_motors(-50, 0); time.sleep(0.7)
     stop_motors();                                  time.sleep(0.3)
@@ -140,6 +156,78 @@ def handle_voice(payload):
         log.warning("voice queue full — dropping clip")
 
 
+# ── LiDAR: Benewake TF-Luna / TFmini (single-beam, UART) ──
+class LidarReader:
+    def __init__(self, port=LIDAR_PORT, baud=LIDAR_BAUD):
+        self.port, self.baud = port, baud
+        self._ser = None
+        if ON_PI:
+            try:
+                import serial
+                self._ser = serial.Serial(port, baud, timeout=0.2)
+                log.info(f"LIDAR: TF-Luna open on {port} @ {baud}")
+            except Exception as e:
+                log.warning(f"LIDAR: serial open failed ({e}) — simulating")
+        else:
+            log.info("LIDAR: simulation mode (not on Pi)")
+
+    def _read_frame(self):
+        ser = self._ser
+        for _ in range(18):
+            if ser.read(1) != b"\x59":
+                continue
+            if ser.read(1) != b"\x59":
+                continue
+            body = ser.read(7)
+            if len(body) != 7:
+                return None
+            if (0x59 + 0x59 + sum(body[:6])) & 0xFF != body[6]:
+                return None
+            return body[0] | (body[1] << 8)
+        return None
+
+    def read(self):
+        if self._ser:
+            try:
+                self._ser.reset_input_buffer()
+                dist = self._read_frame()
+                if dist is not None:
+                    return {"front_cm": dist, "left_cm": None, "right_cm": None}
+            except Exception as e:
+                log.warning(f"LIDAR read error: {e}")
+            return {"front_cm": last_front_cm, "left_cm": None, "right_cm": None}
+        import random
+        return {"front_cm": random.randint(20, 300), "left_cm": None, "right_cm": None}
+
+    def close(self):
+        if self._ser:
+            try:
+                self._ser.close()
+            except Exception:
+                pass
+
+
+def telemetry_loop(client):
+    global last_front_cm
+    period = 1.0 / TELEMETRY_HZ
+    while _telemetry_run:
+        try:
+            r = lidar.read() if lidar else {"front_cm": -1, "left_cm": None, "right_cm": None}
+            front = r.get("front_cm", -1)
+            last_front_cm = front if front is not None else -1
+            client.publish("robot/telemetry/lidar", json.dumps({
+                "front_cm": front,
+                "left_cm":  r.get("left_cm"),
+                "right_cm": r.get("right_cm"),
+                "obstacle": 0 <= last_front_cm < OBSTACLE_WARN_CM,
+                "warn_cm":  OBSTACLE_WARN_CM,
+                "stop_cm":  OBSTACLE_STOP_CM,
+            }), qos=0)
+        except Exception as e:
+            log.warning(f"Telemetry error: {e}")
+        time.sleep(period)
+
+
 # ── MQTT callbacks ────────────────────────────────────────
 def on_connect(client, userdata, flags, reason_code, properties=None):
     ok = (reason_code == 0) if isinstance(reason_code, int) else (not reason_code.is_failure)
@@ -173,6 +261,9 @@ def on_message(client, userdata, msg):
     if msg.topic == "robot/cmd/move":
         x = float(data.get("x", 0))
         y = float(data.get("y", 0))
+        if y > 0 and 0 <= last_front_cm < OBSTACLE_STOP_CM:
+            log.warning(f"Obstacle {last_front_cm}cm — forward blocked")
+            y = 0
         set_motors(*xy_to_motors(x, y))
 
     elif msg.topic == "robot/cmd/stop":
@@ -194,14 +285,11 @@ def on_disconnect(client, userdata, reason_code, properties=None):
 
 # ── Main ──────────────────────────────────────────────────
 def main():
+    global lidar
     if ON_PI:
         setup_gpio()
 
-    # Start audio watchdog thread
-#    threading.Thread(target=_audio_watchdog, daemon=True).start()
-
-    # Auto-start audio on boot
- #   start_audio()
+    lidar = LidarReader()
 
     try:
         client = mqtt.Client(
@@ -220,9 +308,16 @@ def main():
 
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
 
+    threading.Thread(target=telemetry_loop, args=(client,), daemon=True).start()
+    threading.Thread(target=voice_worker, daemon=True).start()
+
     def shutdown(sig, frame):
+        global _telemetry_run, _voice_run
+        _telemetry_run = False
+        _voice_run = False
         stop_motors()
-        stop_audio()
+        if lidar:
+            lidar.close()
         client.disconnect()
         if ON_PI:
             pwm_left.stop()
