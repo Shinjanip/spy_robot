@@ -128,21 +128,50 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
   margin-bottom: 2px;
 }
 
-#mic-btn {
+.audio-btn {
   width: 100%;
   padding: 9px;
   background: #238636; border: none;
   color: #fff; font-size: 13px; font-weight: 600;
   border-radius: 7px; cursor: pointer;
+  touch-action: none; user-select: none; -webkit-user-select: none;
 }
-#mic-btn.muted { background: #da3633; }
-#mic-btn:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+.audio-btn.muted   { background: #da3633; }
+.audio-btn.talking { background: #1f6feb; box-shadow: 0 0 0 3px rgba(31,111,235,0.35); }
+.audio-btn:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
 
 #meter-wrap { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
 #meter-bar {
   height: 100%; width: 0%;
   background: #3fb950; border-radius: 3px;
   transition: width 0.05s linear;
+}
+.hint { font-size: 11px; color: #6e7681; line-height: 1.4; }
+
+/* ── LiDAR card ── */
+#lidar-panel {
+  width: 100%; max-width: 340px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+#lidar-panel .panel-title {
+  font-size: 11px; font-weight: 600; letter-spacing: 1px;
+  text-transform: uppercase; color: #8b949e;
+}
+.lidar-readout { display: flex; align-items: baseline; gap: 8px; }
+#lidar-dist { font-size: 32px; font-weight: 800; color: #3fb950; line-height: 1; }
+#lidar-dist.warn   { color: #d29922; }
+#lidar-dist.danger { color: #f85149; }
+.lidar-unit { font-size: 14px; color: #8b949e; }
+#lidar-status { margin-left: auto; font-size: 12px; font-weight: 600; color: #8b949e; }
+#lidar-bar-wrap { height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; }
+#lidar-bar {
+  height: 100%; width: 0%;
+  background: #3fb950; border-radius: 4px;
+  transition: width 0.2s linear, background 0.2s;
 }
 </style>
 </head>
@@ -175,9 +204,19 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
 
   <button id="stop-btn">⬛ STOP</button>
 
+  <div id="lidar-panel">
+    <div class="panel-title">📡 LiDAR · obstacle</div>
+    <div class="lidar-readout">
+      <span id="lidar-dist">--</span><span class="lidar-unit">cm</span>
+      <span id="lidar-status">no data</span>
+    </div>
+    <div id="lidar-bar-wrap"><div id="lidar-bar"></div></div>
+  </div>
+
   <div id="audio-panel">
-    <div class="panel-title">🎙 Audio</div>
-    <button id="mic-btn" disabled>Enable microphone</button>
+    <div class="panel-title">🎙 Audio · push-to-talk (walkie-talkie)</div>
+    <button id="listen-btn" class="audio-btn">🔊 Listening (tap to mute)</button>
+    <button id="talk-btn" class="audio-btn" disabled>🎙 Hold to talk</button>
     <div id="meter-wrap"><div id="meter-bar"></div></div>
     <div class="row">
       <span>Mic gain</span>
@@ -189,6 +228,9 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
       <input type="range" id="spk-vol" min="0" max="1" step="0.05" value="0.8">
       <span class="row-val" id="spk-vol-val">80%</span>
     </div>
+    <div class="hint">Hold <b>Talk</b> (or hold the <b>T</b> key) to record, release to send.
+      Your clip is sent over MQTT and plays on the robot's speaker a moment later.
+      Incoming audio mutes while you record.</div>
   </div>
 </div>
 
@@ -202,9 +244,39 @@ header h1 { font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #58a6
 const WS_BASE = (location.protocol === "https:" ? "wss:" : "ws:")
               + "//" + location.host + "/api/ws";
 
-const MQTT_URL  = "wss://5b5d1fc229d14745991d15a955fef7ca.s1.eu.hivemq.cloud:8884/mqtt";
+const MQTT_URL  = "wss://526051de70294f8987413be16703e453.s1.eu.hivemq.cloud:8884/mqtt";
 const MQTT_USER = "spyrobot";
 const MQTT_PASS = "MySecurePass123";
+
+// ── Tailscale-only setup ──────────────────────────────────
+// No Cloudflare TURN, no external STUN, no card. Both the Pi and every viewer
+// are on the same Tailnet, so Tailscale provides NAT traversal. WebRTC uses
+// the host candidate go2rtc advertises (the Pi's Tailscale IP in go2rtc.yaml).
+const TURN_CREDS_URL = "";
+const ICE_SERVERS = [];
+
+let _iceCache = null;
+async function getIceServers() {
+  if (!TURN_CREDS_URL) return ICE_SERVERS;
+  try {
+    const r = await fetch(TURN_CREDS_URL, { cache: "no-store" });
+    const j = await r.json();
+    if (Array.isArray(j.iceServers)) { _iceCache = j.iceServers; }
+    else if (j.username && j.credential) {
+      _iceCache = ICE_SERVERS.map(s => s.username !== undefined
+        ? { ...s, username: j.username, credential: j.credential } : s);
+    }
+  } catch (e) {
+    console.warn("TURN credential fetch failed, using inline values", e);
+  }
+  return _iceCache || ICE_SERVERS;
+}
+
+// ── Talk-back (walkie-talkie over MQTT) ───────────────────
+const VOICE_TOPIC    = "robot/cmd/voice";
+const MAX_CLIP_MS    = 12000;          // auto-stop recording after 12s
+const MAX_CLIP_BYTES = 200 * 1024;     // safety cap to stay under broker limits
+const VOICE_BITRATE  = 32000;          // Opus bitrate — keeps clips small
 
 // ═══════════════════════════════════════════════════════
 // DOM
@@ -225,8 +297,12 @@ const joyKnob     = document.getElementById("joy-knob");
 const stopBtn     = document.getElementById("stop-btn");
 const speedSlider = document.getElementById("speed-slider");
 const speedVal    = document.getElementById("speed-val");
-const micBtn      = document.getElementById("mic-btn");
+const listenBtn   = document.getElementById("listen-btn");
+const talkBtn     = document.getElementById("talk-btn");
 const meterBar    = document.getElementById("meter-bar");
+const lidarDist   = document.getElementById("lidar-dist");
+const lidarStatus = document.getElementById("lidar-status");
+const lidarBar    = document.getElementById("lidar-bar");
 const micGain     = document.getElementById("mic-gain");
 const micGainVal  = document.getElementById("mic-gain-val");
 const spkVol      = document.getElementById("spk-vol");
@@ -246,23 +322,39 @@ document.addEventListener("click", () => {
 }, { capture: true });
 
 // ═══════════════════════════════════════════════════════
-// CORE: WebSocket-based WebRTC signalling (go2rtc native)
+// CORE: WebSocket-based WebRTC signalling (go2rtc native) — VIDEO ONLY
 // ═══════════════════════════════════════════════════════
 function connectWS(params, setupPC, onTrack, onOpen, onClose) {
   const ws = new WebSocket(`${WS_BASE}?${params}`);
   let pc   = null;
+  let keepalive = null;
+  let done = false;
+
+  function finish() {
+    if (done) return;
+    done = true;
+    if (keepalive) { clearInterval(keepalive); keepalive = null; }
+    if (pc) { try { pc.close(); } catch (_) {} pc = null; }
+    try { ws.close(); } catch (_) {}
+    onClose && onClose();
+  }
 
   ws.addEventListener("open", async () => {
     pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+      iceServers: await getIceServers(),
+      bundlePolicy: "max-bundle",
     });
 
     pc.addEventListener("icecandidate", ev => {
-      if (!ev.candidate) return;
-      ws.send(JSON.stringify({ type: "webrtc/candidate", value: ev.candidate.candidate }));
+      if (ev.candidate && ws.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({ type: "webrtc/candidate", value: ev.candidate.candidate }));
     });
 
     pc.addEventListener("track", ev => onTrack && onTrack(ev));
+
+    pc.addEventListener("connectionstatechange", () => {
+      if (pc && pc.connectionState === "failed") finish();
+    });
 
     await setupPC(pc);
 
@@ -270,11 +362,17 @@ function connectWS(params, setupPC, onTrack, onOpen, onClose) {
     await pc.setLocalDescription(offer);
     ws.send(JSON.stringify({ type: "webrtc/offer", value: pc.localDescription.sdp }));
 
+    keepalive = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({ type: "keepalive" }));
+    }, 25000);
+
     onOpen && onOpen(pc, ws);
   });
 
   ws.addEventListener("message", ev => {
-    const msg = JSON.parse(ev.data);
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
     if (!pc) return;
     if (msg.type === "webrtc/answer") {
       pc.setRemoteDescription({ type: "answer", sdp: msg.value });
@@ -284,19 +382,19 @@ function connectWS(params, setupPC, onTrack, onOpen, onClose) {
   });
 
   ws.addEventListener("close", () => {
-    if (pc) { pc.close(); pc = null; }
-    onClose && onClose();
+    if (keepalive) { clearInterval(keepalive); keepalive = null; }
+    const st = pc && pc.connectionState;
+    if (st === "connected" || st === "connecting") return;
+    finish();
   });
 
-  ws.addEventListener("error", () => ws.close());
+  ws.addEventListener("error", () => { try { ws.close(); } catch (_) {} });
 
   return ws;
 }
 
 // ═══════════════════════════════════════════════════════
-// VIDEO + AUDIO — receive spy_cam (video) + spy_mic (audio)
-// Both come through a single WebSocket to spy_cam which has
-// both video and audio sources attached in go2rtc.yaml
+// VIDEO + ROBOT AUDIO — receive spy_cam (video + robot mic)
 // ═══════════════════════════════════════════════════════
 let videoWs = null, videoRetry = 2000;
 
@@ -311,7 +409,6 @@ function connectVideo() {
   videoWs = connectWS(
     "src=spy_cam",
     pc => {
-      // Request both video and audio from spy_cam
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
     },
@@ -333,16 +430,15 @@ function connectVideo() {
             streamLbl.textContent = "live";
           });
       } else if (ev.track.kind === "audio") {
-        // Attach robot mic audio to the <audio> element
         robotAudio.srcObject = ev.streams[0];
         robotAudio.volume = parseFloat(spkVol.value);
+        applyListen();
         robotAudio.play()
           .then(() => {
             audioDot.className = "dot on";
             audioLbl.textContent = "rx audio";
           })
           .catch(() => {
-            // Autoplay blocked — will play on next user click
             audioDot.className = "dot on";
             audioLbl.textContent = "tap to hear";
           });
@@ -364,22 +460,44 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// AUDIO IN — send browser mic to speaker_in
+// TALK-BACK — record mic, send clip over MQTT (walkie-talkie)
+// The robot (robot_controller.py) subscribes to robot/cmd/voice, decodes the
+// base64 audio, and plays it out the MAX98357A via ffmpeg.
 // ═══════════════════════════════════════════════════════
-let audioInWs = null;
-let micStream = null;
-let audioCtx  = null;
-let gainNode  = null;
-let analyser  = null;
-let micMuted  = false;
+let micStream  = null;
+let audioCtx   = null;
+let gainNode   = null;
+let analyser   = null;
+let recDest    = null;     // MediaStreamDestination we record from (post-gain)
+let recorder   = null;
+let chunks     = [];
+let micReady   = false;
+let talking    = false;
+let listening  = true;
+let talkTimer  = null;
+let meterRunning = false;
 
-async function enableMic() {
+function applyListen() {
+  // Mute incoming robot audio when not listening, or while recording.
+  robotAudio.muted = (!listening) || talking;
+  listenBtn.textContent = listening
+    ? "🔊 Listening (tap to mute)" : "🔇 Muted (tap to listen)";
+  listenBtn.classList.toggle("muted", !listening);
+}
+
+listenBtn.addEventListener("click", () => { listening = !listening; applyListen(); });
+
+async function prepareMic() {
+  if (micReady) return true;
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
   } catch (err) {
-    micBtn.textContent = "Mic access denied";
+    talkBtn.textContent = "Mic access denied";
     console.error("getUserMedia failed:", err);
-    return;
+    return false;
   }
 
   audioCtx  = new AudioContext();
@@ -387,42 +505,98 @@ async function enableMic() {
   gainNode  = audioCtx.createGain();
   analyser  = audioCtx.createAnalyser();
   analyser.fftSize = 256;
+  recDest   = audioCtx.createMediaStreamDestination();
+
   src.connect(gainNode);
   gainNode.connect(analyser);
+  gainNode.connect(recDest);          // gain-adjusted audio is what we record
   gainNode.gain.value = parseFloat(micGain.value);
 
-  const dest         = audioCtx.createMediaStreamDestination();
-  gainNode.connect(dest);
-  const gainedStream = dest.stream;
-
-  audioInWs = connectWS(
-    "dst=speaker_in",
-    pc => { gainedStream.getAudioTracks().forEach(t => pc.addTrack(t, gainedStream)); },
-    null,
-    () => {
-      micBtn.textContent = "🎙 Mute mic";
-      micBtn.classList.remove("muted");
-      micMuted = false;
-      startMeter();
-      pubAudio(true);
-    },
-    () => { /* disconnected */ }
-  );
+  micReady = true;
+  startMeter();
+  return true;
 }
 
-function toggleMic() {
-  if (!micStream) { enableMic(); return; }
-  micMuted = !micMuted;
-  micStream.getAudioTracks().forEach(t => t.enabled = !micMuted);
-  micBtn.textContent = micMuted ? "🔇 Unmute mic" : "🎙 Mute mic";
-  micBtn.classList.toggle("muted", micMuted);
+function pickMime() {
+  const prefer = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+  for (const m of prefer) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return "";   // let the browser choose
+}
+
+async function startTalk() {
+  if (talking) return;
+  const ok = await prepareMic();
+  if (!ok) return;
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+
+  talking = true;
+  chunks = [];
+
+  const mime = pickMime();
+  try {
+    recorder = mime
+      ? new MediaRecorder(recDest.stream, { mimeType: mime, audioBitsPerSecond: VOICE_BITRATE })
+      : new MediaRecorder(recDest.stream);
+  } catch (e) {
+    recorder = new MediaRecorder(recDest.stream);
+  }
+
+  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = sendClip;
+  recorder.start();
+
+  talkBtn.classList.add("talking");
+  talkBtn.textContent = "🔴 Recording… (release to send)";
+  applyListen();   // mute incoming while recording
+  audioLbl.textContent = "recording";
+
+  // Safety: auto-stop so a stuck button can't record forever.
+  talkTimer = setTimeout(stopTalk, MAX_CLIP_MS);
+}
+
+function stopTalk() {
+  if (!talking) return;
+  talking = false;
+  if (talkTimer) { clearTimeout(talkTimer); talkTimer = null; }
+  try { if (recorder && recorder.state !== "inactive") recorder.stop(); } catch (_) {}
+  talkBtn.classList.remove("talking");
+  talkBtn.textContent = "🎙 Hold to talk";
+  meterBar.style.width = "0%";
+  applyListen();   // restore incoming audio
+}
+
+function sendClip() {
+  if (!chunks.length) return;
+  const blob = new Blob(chunks, { type: chunks[0].type || "audio/webm" });
+  chunks = [];
+
+  if (blob.size > MAX_CLIP_BYTES) {
+    audioLbl.textContent = "clip too long";
+    console.warn("voice clip too large:", blob.size);
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const b64 = String(reader.result).split(",")[1] || "";
+    if (!b64) return;
+    pub(VOICE_TOPIC, { audio: b64 }, 0);
+    audioLbl.textContent = "clip sent";
+    setTimeout(() => { if (!talking) audioLbl.textContent = "rx audio"; }, 1500);
+  };
+  reader.readAsDataURL(blob);
 }
 
 function startMeter() {
+  if (meterRunning) return;
+  meterRunning = true;
   const buf = new Uint8Array(analyser.frequencyBinCount);
   function tick() {
+    if (!analyser) { meterRunning = false; return; }
     analyser.getByteFrequencyData(buf);
-    const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+    const avg = talking ? buf.reduce((a, b) => a + b, 0) / buf.length : 0;
     meterBar.style.width = Math.min(avg * 2, 100) + "%";
     meterBar.style.background = avg > 60 ? "#f85149" : avg > 30 ? "#d29922" : "#3fb950";
     requestAnimationFrame(tick);
@@ -430,9 +604,12 @@ function startMeter() {
   tick();
 }
 
-micBtn.disabled = false;
-micBtn.textContent = "🎙 Enable mic";
-micBtn.addEventListener("click", toggleMic);
+talkBtn.disabled = false;
+talkBtn.addEventListener("pointerdown", e => { e.preventDefault(); startTalk(); });
+talkBtn.addEventListener("pointerup",     stopTalk);
+talkBtn.addEventListener("pointerleave",  stopTalk);
+talkBtn.addEventListener("pointercancel", stopTalk);
+applyListen();
 
 micGain.addEventListener("input", () => {
   const v = parseFloat(micGain.value);
@@ -457,8 +634,46 @@ function connectMqtt() {
     clientId: "dashboard-" + Math.random().toString(36).slice(2, 8),
     reconnectPeriod: 3000, keepalive: 30,
   });
-  mqttClient.on("connect", () => { mqttDot.className = "dot on"; mqttLbl.textContent = "connected"; });
+  mqttClient.on("connect", () => {
+    mqttDot.className = "dot on"; mqttLbl.textContent = "connected";
+    mqttClient.subscribe("robot/telemetry/lidar");
+  });
   mqttClient.on("close",   () => { mqttDot.className = "dot";    mqttLbl.textContent = "reconnecting…"; });
+  mqttClient.on("message", (topic, payload) => {
+    if (topic !== "robot/telemetry/lidar") return;
+    try { renderLidar(JSON.parse(payload.toString())); } catch (_) {}
+  });
+}
+
+// ── LiDAR readout + obstacle warning ──────────────────────
+const LIDAR_MAX_CM = 300;
+function renderLidar(d) {
+  const cm   = d.front_cm;
+  const warn = d.warn_cm ?? 60;
+  const stop = d.stop_cm ?? 25;
+
+  if (cm === undefined || cm === null || cm < 0) {
+    lidarDist.textContent = "--";
+    lidarStatus.textContent = "no data";
+    lidarStatus.style.color = "#8b949e";
+    lidarBar.style.width = "0%";
+    lidarDist.className = "";
+    return;
+  }
+
+  lidarDist.textContent = Math.round(cm);
+  lidarBar.style.width = Math.min(cm / LIDAR_MAX_CM * 100, 100) + "%";
+
+  if (cm < stop) {
+    lidarDist.className = "danger"; lidarBar.style.background = "#f85149";
+    lidarStatus.textContent = "⛔ BLOCKED"; lidarStatus.style.color = "#f85149";
+  } else if (cm < warn) {
+    lidarDist.className = "warn"; lidarBar.style.background = "#d29922";
+    lidarStatus.textContent = "⚠ close"; lidarStatus.style.color = "#d29922";
+  } else {
+    lidarDist.className = ""; lidarBar.style.background = "#3fb950";
+    lidarStatus.textContent = "clear"; lidarStatus.style.color = "#3fb950";
+  }
 }
 
 function pub(topic, payload, qos = 0) {
@@ -474,7 +689,6 @@ function pubMove(x, y) {
 }
 function pubStop()    { pub("robot/cmd/stop",  { reason: "button" }, 1); }
 function pubSpeed(v)  { pub("robot/cmd/speed", { speed: v }, 1); }
-function pubAudio(on) { pub("robot/cmd/audio", { enabled: on }, 1); }
 
 speedSlider.addEventListener("input", () => {
   speedPct = parseInt(speedSlider.value);
@@ -534,15 +748,18 @@ const keys = new Set();
 document.addEventListener("keydown", e => {
   keys.add(e.key);
   if (e.key === " ") { e.preventDefault(); pubStop(); }
-  if (e.key === "m") toggleMic();
+  if ((e.key === "t" || e.key === "T") && !e.repeat) startTalk();  // hold to talk
 });
-document.addEventListener("keyup", e => keys.delete(e.key));
+document.addEventListener("keyup", e => {
+  keys.delete(e.key);
+  if (e.key === "t" || e.key === "T") stopTalk();
+});
 setInterval(() => {
   let x = 0, y = 0;
-  if (keys.has("ArrowUp")    || keys.has("w")) y =  0.8;
-  if (keys.has("ArrowDown")  || keys.has("s")) y = -0.8;
-  if (keys.has("ArrowLeft")  || keys.has("a")) x = -0.6;
-  if (keys.has("ArrowRight") || keys.has("d")) x =  0.6;
+  if (keys.has("ArrowUp")    || keys.has("w")) y = - 0.8;
+  if (keys.has("ArrowDown")  || keys.has("s")) y = 0.8;
+  if (keys.has("ArrowLeft")  || keys.has("a")) x = 0.6;
+  if (keys.has("ArrowRight") || keys.has("d")) x = - 0.6;
   if (x || y) pubMove(x, y);
 }, 100);
 
