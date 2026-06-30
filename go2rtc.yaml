@@ -3,13 +3,35 @@ api:
   static_dir: /home/raspberry4/go2rtc/www
 
 streams:
+  # spy_cam = camera video (H.264) + robot mic audio (Opus).
+  # The browser receives both from this one stream.
+  #
+  # Talk-back (you -> robot speaker) is NOT handled here anymore. It runs over
+  # MQTT instead: the dashboard records a clip and publishes it to
+  # robot/cmd/voice, and robot_controller.py plays it on the MAX98357A. So the
+  # old `speaker_in` stream has been removed — go2rtc is video + mic only.
   spy_cam:
     - exec:rpicam-vid -t 0 --inline --width 1280 --height 720 -o -
-    - exec:ffmpeg -f alsa -i plughw:1,0 -c:a libopus -b:a 32k -ar 48000 -ac 1 -f rtsp -rtsp_transport tcp {output}
-  speaker_in:
-    - alsa:plughw:2,0
+    # USB mic. Confirm the capture card number with `arecord -l` — it was
+    # card 3 here. If it changes, update plughw:3,0 (or use the named form
+    # plughw:CARD=<name>,DEV=0 to be immune to renumbering).
+    - "exec:ffmpeg -f alsa -i plughw:CARD=Device,DEV=0 -c:a libopus -b:a 32k -ar 48000 -ac 1 -f rtsp -rtsp_transport tcp {output}"
+
 webrtc:
   listen: ":8555/tcp"
+
+  # ── Tailscale-only setup ──────────────────────────────────────────
+  # No Cloudflare TURN, no public STUN, no card. Both the Pi and every viewer
+  # are on the same Tailnet, so Tailscale itself provides NAT traversal
+  # (direct P2P when possible, DERP relay when not). WebRTC just advertises
+  # the Pi's Tailscale IP as a host candidate; the browser, also on Tailscale,
+  # connects straight to it over the encrypted Tailscale path.
+  #
+  # 100.79.75.60 is this Pi's Tailscale IP. If it ever changes, update it
+  # (check with: tailscale ip -4).
   candidates:
-   - 115.96.154.109:8555
-    - stun:8555
+    - 100.120.93.2:8555          # Pi's Tailscale IP, port 8555/tcp
+
+  # No ice_servers block: STUN/TURN are only needed to traverse the public
+  # internet, which Tailscale already handles. Leaving it out avoids wasting
+  # time on candidates that would fail behind CGNAT anyway.
